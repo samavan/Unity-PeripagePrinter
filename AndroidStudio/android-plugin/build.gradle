@@ -1,0 +1,29 @@
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.kiosk.peripage'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 26   // Bluetooth Classic SPP stable from here; raise if your kiosk device allows
+        targetSdk 34
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    // Unity classes.jar goes here if you need UnityPlayer types directly
+    // instead of reflection (reflection is used in PeripageBridge.kt so
+    // this is optional):
+    // compileOnly files('libs/classes.jar')
+}
