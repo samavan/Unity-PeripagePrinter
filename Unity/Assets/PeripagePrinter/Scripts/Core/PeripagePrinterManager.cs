@@ -47,6 +47,14 @@ namespace TechArt.Module.Peripage
         public bool simulateConnectFailureInEditor = false;
         public bool simulatePrintFailureInEditor = false;
 
+        [Header("DEBUG: Mac protocol diagnostic")]
+        [Tooltip("TEMPORARY: when on Mac and this is checked, PrintPhoto() ignores " +
+                 "the real image entirely and sends a single tiny text-only test " +
+                 "payload instead — no PNG decode, no chunking. Used to isolate " +
+                 "whether the native layer itself is slow, or if it's specific to " +
+                 "the full raster print path. Uncheck to restore normal printing.")]
+        public bool debugTinyTestPrintOnly = false;
+
         public const int PRINTER_WIDTH_PX = 384;
 
         public event Action OnConnected;
@@ -93,6 +101,14 @@ namespace TechArt.Module.Peripage
     #if UNITY_ANDROID && !UNITY_EDITOR
             _bridge = new PeripageAndroidBridge(gameObject.name);
             _initialized = true;
+    #elif UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX
+            // Real Mac path: talks to the same PeripageMacNative plugin that
+            // PeripageMacDeviceDiscovery uses to scan/connect, so whatever the
+            // user already connected to via that flow is what Print() uses here.
+            _bridge = new PeripageMacBridge(this);
+            _initialized = true;
+            Debug.Log("[PeripagePrinterManager] Using real Mac Bluetooth bridge (PeripageMacNative). " +
+                      "Connect via PeripageMacDeviceDiscovery's scan/select/OK flow before printing.");
     #else
             if (useMockBridgeOutsideAndroid)
             {
@@ -146,6 +162,18 @@ namespace TechArt.Module.Peripage
                 OnPrintFailed?.Invoke("Bridge not initialized");
                 return;
             }
+
+    #if UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX
+            if (debugTinyTestPrintOnly && _bridge is PeripageMacBridge macBridge)
+            {
+                Debug.Log("[PeripagePrinterManager] debugTinyTestPrintOnly is ON — " +
+                          "sending a tiny text test instead of the real image.");
+                bool ok = macBridge.PrintTestText("HELLO");
+                if (ok) OnPrintCompleteCallback("");
+                else OnPrintFailedCallback("tiny test print failed (mac native)");
+                return;
+            }
+    #endif
 
             // Resize to the printer's native width — the library handles the
             // actual monochrome/dithering conversion internally, we just need

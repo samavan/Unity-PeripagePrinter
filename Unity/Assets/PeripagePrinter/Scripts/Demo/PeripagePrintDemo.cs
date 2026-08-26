@@ -10,8 +10,9 @@ namespace TechArt.Module.Peripage.Demo
     ///   1. printZone (RectTransform) marks the screen area to crop
     ///   2. croppedPreviewImage shows that raw cropped capture
     ///   3. printerQualityPreviewImage shows a simulated printer-resolution
-    ///      version (384px wide, thresholded black/white) so the user can see
-    ///      roughly what the thermal print will actually look like
+    ///      version (384px wide, grayscale — via PeripageBitmapProtocol.
+    ///      BuildGrayscalePreview) so the user can see roughly what the
+    ///      thermal print will actually look like
     ///   4. Print button sends the real (non-downsampled) crop through the
     ///      existing PeripagePrinterManager, which already handles resizing
     ///      and calling into whichever bridge (Android/Mac/mock) is active
@@ -166,44 +167,16 @@ namespace TechArt.Module.Peripage.Demo
         }
 
         /// <summary>
-        /// Simulates what the thermal printer will actually produce: resized to
-        /// the printer's native 384px width, converted to grayscale, and
-        /// thresholded to pure black/white (thermal heads have no grayscale —
-        /// it's on or off per dot). This is preview-only; the actual bytes sent
-        /// to print go through PeripagePrinterManager, which may apply proper
-        /// dithering via the printer library itself rather than this flat
-        /// threshold.
+        /// Simulates what the thermal printer will actually produce. All actual
+        /// image-conversion math (resize + grayscale) lives in
+        /// PeripageBitmapProtocol — the same class that builds the real dithered
+        /// print data — so this preview can't silently drift out of sync with
+        /// what actually gets printed. This method is just a thin call-through;
+        /// don't reimplement the conversion here.
         /// </summary>
         private Texture2D BuildPrinterQualityPreview(Texture2D source)
         {
-            const int printerWidth = PeripagePrinterManager.PRINTER_WIDTH_PX;
-            int printerHeight = Mathf.RoundToInt(source.height * (printerWidth / (float)source.width));
-
-            RenderTexture rt = RenderTexture.GetTemporary(printerWidth, printerHeight);
-            Graphics.Blit(source, rt);
-            RenderTexture prev = RenderTexture.active;
-            RenderTexture.active = rt;
-
-            Texture2D resized = new Texture2D(printerWidth, printerHeight, TextureFormat.RGB24, false);
-            resized.ReadPixels(new Rect(0, 0, printerWidth, printerHeight), 0, 0);
-            resized.Apply();
-
-            RenderTexture.active = prev;
-            RenderTexture.ReleaseTemporary(rt);
-
-            // Threshold to black/white so the preview actually reflects what a
-            // thermal head can produce (no grayscale dots).
-            Color32[] pixels = resized.GetPixels32();
-            for (int i = 0; i < pixels.Length; i++)
-            {
-                float luminance = (0.299f * pixels[i].r + 0.587f * pixels[i].g + 0.114f * pixels[i].b) / 255f;
-                byte value = luminance < 0.5f ? (byte)0 : (byte)255;
-                pixels[i] = new Color32(value, value, value, 255);
-            }
-            resized.SetPixels32(pixels);
-            resized.Apply();
-
-            return resized;
+            return PeripageBitmapProtocol.BuildGrayscalePreview(source, PeripageBitmapProtocol.PRINTER_WIDTH_PX);
         }
 
         /// <summary>

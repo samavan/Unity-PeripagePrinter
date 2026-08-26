@@ -48,9 +48,12 @@ namespace TechArt.Module.Peripage
             _pollTimer = 0f;
 
             bool scanningNow = PeripageMacNative.Peripage_IsScanning() == 1;
-            if (isScanning && scanningNow != isScanning)
+            if (isScanning && scanningNow != isScanning && !_scanFinishedLogged)
             {
-                // Scan just finished
+                _scanFinishedLogged = true;
+                Debug.Log(devices.Count > 0
+                    ? $"[PeripageMacDeviceDiscovery] Scan finished — {devices.Count} device(s) found."
+                    : "[PeripageMacDeviceDiscovery] Scan finished — no devices found.");
             }
             isScanning = scanningNow;
 
@@ -60,18 +63,34 @@ namespace TechArt.Module.Peripage
             if (connectedNow && !isConnected)
             {
                 isConnected = true;
+                _connectedAt = Time.realtimeSinceStartup;
+                _connectFailedLogged = false; // clear so a future failed attempt can log again
+                Debug.Log($"[PeripageMacDeviceDiscovery] Connected to {selectedAddress}.");
                 OnConnected?.Invoke();
             }
             else if (!connectedNow && isConnected)
             {
                 isConnected = false;
+                float heldFor = Time.realtimeSinceStartup - _connectedAt;
+                Debug.LogWarning($"[PeripageMacDeviceDiscovery] Connection dropped — was connected for {heldFor:F1}s.");
             }
 
-            if (PeripageMacNative.Peripage_LastConnectFailed() == 1 && !isConnected)
+            // Peripage_LastConnectFailed() appears to be a sticky native flag that stays
+            // set until the next connect attempt, not a one-shot event — so without this
+            // guard, this would re-log every single poll (every 0.5s) forever after any
+            // failed attempt. Only report it once; ConfirmAndConnect()/StartScan() reset
+            // the guard so the next real attempt can report its own failure.
+            if (PeripageMacNative.Peripage_LastConnectFailed() == 1 && !isConnected && !_connectFailedLogged)
             {
+                _connectFailedLogged = true;
+                Debug.LogWarning("[PeripageMacDeviceDiscovery] Connect failed (native reported LastConnectFailed).");
                 OnConnectFailed?.Invoke("Failed to connect to printer");
             }
         }
+
+        private float _connectedAt;
+        private bool _connectFailedLogged;
+        private bool _scanFinishedLogged;
 
         private void RefreshDeviceListFromNative()
         {
@@ -101,6 +120,8 @@ namespace TechArt.Module.Peripage
         {
             devices.Clear();
             selectedAddress = null;
+            _scanFinishedLogged = false;
+            Debug.Log("[PeripageMacDeviceDiscovery] Starting scan...");
             PeripageMacNative.Peripage_StartScan();
             isScanning = true;
         }
@@ -132,14 +153,18 @@ namespace TechArt.Module.Peripage
         {
             if (string.IsNullOrEmpty(selectedAddress))
             {
+                Debug.LogWarning("[PeripageMacDeviceDiscovery] ConfirmAndConnect called with no device selected.");
                 OnConnectFailed?.Invoke("No device selected");
                 return;
             }
+            _connectFailedLogged = false;
+            Debug.Log($"[PeripageMacDeviceDiscovery] Connecting to {selectedAddress}...");
             PeripageMacNative.Peripage_Connect(selectedAddress);
         }
 
         public void Disconnect()
         {
+            Debug.Log("[PeripageMacDeviceDiscovery] Disconnect requested.");
             PeripageMacNative.Peripage_Disconnect();
             isConnected = false;
         }

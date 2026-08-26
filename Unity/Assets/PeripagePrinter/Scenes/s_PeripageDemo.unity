@@ -1186,6 +1186,7 @@ MonoBehaviour:
   saveMockPrintPreviewPng: 1
   simulateConnectFailureInEditor: 0
   simulatePrintFailureInEditor: 0
+  debugTinyTestPrintOnly: 1
 --- !u!4 &1155271574
 Transform:
   m_ObjectHideFlags: 0
