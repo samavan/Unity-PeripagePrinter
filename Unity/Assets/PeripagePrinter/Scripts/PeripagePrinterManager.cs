@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using UnityEngine;
 using UnityEngine.Android;
 
@@ -10,15 +11,39 @@ using UnityEngine.Android;
 /// Handles: runtime permissions, connecting to the printer, converting a
 /// Texture2D into the 1-bit packed bitmap format the printer needs, and
 /// firing the print call.
+///
+/// Works in TWO modes, switched automatically by platform:
+///   - On Android device: talks to the real Bluetooth printer via
+///     PeripageAndroidBridge (AndroidJavaObject -> Kotlin plugin).
+///   - In the Editor (and non-Android standalone builds): talks to
+///     PeripageEditorMockBridge, which simulates connect/print timing and
+///     outcomes, so you can build/test the kiosk UI flow on Win/Mac without
+///     the physical printer or an Android build.
 /// </summary>
 public class PeripagePrinterManager : MonoBehaviour
 {
     public static PeripagePrinterManager Instance { get; private set; }
 
     [Header("Printer")]
-    [Tooltip("Bluetooth MAC address of the kiosk's paired Peripage printer. " +
-             "Fixed for a kiosk since it's always the same physical unit.")]
-    public string printerMacAddress = "AA:BB:CC:DD:EE:FF";
+    [Tooltip("Bluetooth broadcast name of the kiosk's paired Peripage printer " +
+             "(e.g. \"PPG_P21_XXXX\") — NOT a MAC address. Find it in Android " +
+             "Bluetooth settings after pairing once. Must match the name your " +
+             "forked BluetoothHelper library is configured to look for.")]
+    public string printerName = "PPG_P21_XXXX";
+
+    [Header("Editor / Standalone testing")]
+    [Tooltip("When running outside Android (Editor, Win/Mac standalone), " +
+             "use the mock bridge instead of trying (and failing) to reach " +
+             "real Bluetooth hardware.")]
+    public bool useMockBridgeOutsideAndroid = true;
+
+    [Tooltip("If true, also saves a PNG preview of what would have been " +
+             "printed to a 'PeripagePreviews' folder next to the project, " +
+             "so you can eyeball the monochrome conversion without hardware.")]
+    public bool saveMockPrintPreviewPng = true;
+
+    public bool simulateConnectFailureInEditor = false;
+    public bool simulatePrintFailureInEditor = false;
 
     public const int PRINTER_WIDTH_PX = 384;
 
@@ -27,7 +52,7 @@ public class PeripagePrinterManager : MonoBehaviour
     public event Action OnPrintComplete;
     public event Action<string> OnPrintFailed;
 
-    private AndroidJavaObject _bridge;
+    private IPeripageBridge _bridge;
     private bool _initialized;
 
     void Awake()
@@ -64,12 +89,27 @@ public class PeripagePrinterManager : MonoBehaviour
     private void InitBridge()
     {
 #if UNITY_ANDROID && !UNITY_EDITOR
-        using (var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
+        _bridge = new PeripageAndroidBridge(gameObject.name);
+        _initialized = true;
+#else
+        if (useMockBridgeOutsideAndroid)
         {
-            var activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
-            _bridge = new AndroidJavaObject("com.kiosk.peripage.PeripageBridge", activity);
-            _bridge.Call("init", gameObject.name);
+            var mock = new PeripageEditorMockBridge(this, this)
+            {
+                simulateConnectFailure = simulateConnectFailureInEditor,
+                simulatePrintFailure = simulatePrintFailureInEditor,
+            };
+            _bridge = mock;
             _initialized = true;
+            Debug.Log("[PeripagePrinterManager] Using Editor/standalone mock bridge " +
+                      "(no real printer required). Disable 'useMockBridgeOutsideAndroid' " +
+                      "if you specifically want to test the real-device code path.");
+        }
+        else
+        {
+            Debug.LogWarning("[PeripagePrinterManager] Not on Android and mock bridge " +
+                              "disabled — Connect()/PrintPhoto() calls will no-op.");
+            _initialized = false;
         }
 #endif
     }
@@ -77,19 +117,19 @@ public class PeripagePrinterManager : MonoBehaviour
     public void Connect()
     {
         if (!_initialized) { Debug.LogWarning("Bridge not initialized yet"); return; }
-        _bridge.Call("connect", printerMacAddress);
+        _bridge.Connect(printerName);
     }
 
     public void Disconnect()
     {
         if (!_initialized) return;
-        _bridge.Call("disconnect");
+        _bridge.Disconnect();
     }
 
     public bool IsConnected()
     {
         if (!_initialized) return false;
-        return _bridge.Call<bool>("isConnected");
+        return _bridge.IsConnected();
     }
 
     /// <summary>
@@ -105,13 +145,47 @@ public class PeripagePrinterManager : MonoBehaviour
             return;
         }
 
+        // Resize to the printer's native width — the library handles the
+        // actual monochrome/dithering conversion internally, we just need
+        // to hand it a reasonably-sized image rather than a huge photo.
         Texture2D resized = ResizeToPrinterWidth(source, PRINTER_WIDTH_PX);
-        byte[] packed = ToPackedMonochrome(resized, out int height);
+        byte[] pngBytes = resized.EncodeToPNG();
 
-        _bridge.Call("printBitmap", packed, PRINTER_WIDTH_PX, height);
+#if UNITY_EDITOR
+        if (saveMockPrintPreviewPng && _bridge is PeripageEditorMockBridge)
+        {
+            SavePreviewPng(resized);
+        }
+#endif
+
+        _bridge.PrintBitmap(pngBytes);
 
         if (resized != source) Destroy(resized);
     }
+
+#if UNITY_EDITOR
+    /// <summary>
+    /// Editor-only convenience: writes out what the printer would have
+    /// received as a viewable PNG, so you can sanity-check the
+    /// resize/monochrome conversion without any hardware attached.
+    /// </summary>
+    private void SavePreviewPng(Texture2D resized)
+    {
+        try
+        {
+            string folder = Path.Combine(Application.dataPath, "..", "PeripagePreviews");
+            Directory.CreateDirectory(folder);
+            string filename = $"print_preview_{DateTime.Now:yyyyMMdd_HHmmss}.png";
+            string path = Path.Combine(folder, filename);
+            File.WriteAllBytes(path, resized.EncodeToPNG());
+            Debug.Log($"[PeripagePrinterManager] Saved print preview: {path}");
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"Failed to save print preview: {e.Message}");
+        }
+    }
+#endif
 
     // ---------- Image conversion ----------
 
@@ -132,43 +206,6 @@ public class PeripagePrinterManager : MonoBehaviour
         RenderTexture.ReleaseTemporary(rt);
 
         return resized;
-    }
-
-    /// <summary>
-    /// Converts to 1-bit packed rows (MSB-first), using simple luminance
-    /// thresholding. Swap in Floyd–Steinberg dithering later for noticeably
-    /// better photo quality on thermal output.
-    /// </summary>
-    private byte[] ToPackedMonochrome(Texture2D tex, out int height)
-    {
-        int width = tex.width;
-        height = tex.height;
-        Color32[] pixels = tex.GetPixels32();
-
-        int bytesPerRow = Mathf.CeilToInt(width / 8f);
-        byte[] packed = new byte[bytesPerRow * height];
-
-        const float threshold = 0.5f;
-
-        for (int y = 0; y < height; y++)
-        {
-            for (int x = 0; x < width; x++)
-            {
-                // Texture2D pixels are bottom-up; flip so row 0 = top of image.
-                Color32 c = pixels[(height - 1 - y) * width + x];
-                float luminance = (0.299f * c.r + 0.587f * c.g + 0.114f * c.b) / 255f;
-                bool isBlack = luminance < threshold;
-
-                if (isBlack)
-                {
-                    int byteIndex = y * bytesPerRow + (x / 8);
-                    int bitIndex = 7 - (x % 8);
-                    packed[byteIndex] |= (byte)(1 << bitIndex);
-                }
-            }
-        }
-
-        return packed;
     }
 
     // ---------- Callbacks invoked by Kotlin via UnitySendMessage ----------
