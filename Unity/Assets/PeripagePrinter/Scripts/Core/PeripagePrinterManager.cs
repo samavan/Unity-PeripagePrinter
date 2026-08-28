@@ -47,6 +47,49 @@ namespace TechArt.Module.Peripage
         public bool simulateConnectFailureInEditor = false;
         public bool simulatePrintFailureInEditor = false;
 
+        [Header("Calibration")]
+        [Tooltip("Vertical dot-pitch correction — see PeripageBitmapProtocol." +
+                 "VerticalAspectCorrection's doc comment for what this fixes and " +
+                 "how to derive it (print BuildCalibrationSquareTexture, measure " +
+                 "with a ruler, feed the numbers into " +
+                 "ComputeVerticalAspectCorrectionFromMeasurement). 1.0 = no " +
+                 "correction. You can drag this slider live in Play Mode and " +
+                 "watch UIPeripagePrintDemo's printer-quality preview update to " +
+                 "match, rather than reprinting paper for every trial value. " +
+                 "Persisted across sessions (PlayerPrefs) once changed here or " +
+                 "via SetVerticalAspectCorrection, so a kiosk only needs " +
+                 "calibrating once.")]
+        [Range(0.5f, 2f)]
+        public float verticalAspectCorrection = PeripageBitmapProtocol.DEFAULT_VERTICAL_ASPECT_CORRECTION;
+
+        /// <summary>Raised whenever the calibration value changes (Inspector, PlayerPrefs load, or SetVerticalAspectCorrection), so a debug UI can keep its slider/label in sync without polling.</summary>
+        public event Action<float> OnCalibrationChanged;
+
+        private const string CalibrationPlayerPrefsKey = "Peripage_VerticalAspectCorrection";
+
+        [Header("Dot density")]
+        [Tooltip("Caps how much of the print can be black dots on average — " +
+                 "see PeripageBitmapProtocol.MaxAverageDensity's doc comment. " +
+                 "Lower this if prints look too dark/dirty/dotty; raise it to " +
+                 "recover midtone detail. Same live-preview workflow as the " +
+                 "vertical aspect slider: drag it in Play Mode and " +
+                 "UIPeripagePrintDemo's printer-quality preview updates to " +
+                 "match. Persisted across sessions (PlayerPrefs).")]
+        [Range(0.05f, 0.9f)]
+        public float maxAverageDensity = PeripageBitmapProtocol.DEFAULT_MAX_AVERAGE_DENSITY;
+
+        /// <summary>Raised whenever maxAverageDensity changes (Inspector, PlayerPrefs load, or SetMaxAverageDensity), so a debug UI can keep its slider/label in sync without polling.</summary>
+        public event Action<float> OnDensityChanged;
+
+        private const string DensityPlayerPrefsKey = "Peripage_MaxAverageDensity";
+
+        [Header("Cut margin")]
+        [Tooltip("Blank paper fed after the image, in mm, so there's room to " +
+                 "cut without slicing into the photo. Converted to print rows " +
+                 "via the calibration value above, so calibrate that first — " +
+                 "otherwise this comes out the wrong physical length too.")]
+        public float bottomCutMarginMm = PeripageBitmapProtocol.DEFAULT_BOTTOM_CUT_MARGIN_MM;
+
         [Header("DEBUG: Mac protocol diagnostic")]
         [Tooltip("TEMPORARY: when on Mac and this is checked, PrintPhoto() ignores " +
                  "the real image entirely and sends a single tiny text-only test " +
@@ -54,8 +97,6 @@ namespace TechArt.Module.Peripage
                  "whether the native layer itself is slow, or if it's specific to " +
                  "the full raster print path. Uncheck to restore normal printing.")]
         public bool debugTinyTestPrintOnly = false;
-
-        public const int PRINTER_WIDTH_PX = 384;
 
         public event Action OnConnected;
         public event Action<string> OnConnectFailed;
@@ -70,11 +111,86 @@ namespace TechArt.Module.Peripage
             if (Instance != null) { Destroy(gameObject); return; }
             Instance = this;
             DontDestroyOnLoad(gameObject);
+
+            // A kiosk should only need calibrating once — load whatever was
+            // saved last time before anything else touches VerticalAspectCorrection.
+            if (PlayerPrefs.HasKey(CalibrationPlayerPrefsKey))
+            {
+                verticalAspectCorrection = PlayerPrefs.GetFloat(CalibrationPlayerPrefsKey);
+            }
+            PeripageBitmapProtocol.VerticalAspectCorrection = verticalAspectCorrection;
+
+            if (PlayerPrefs.HasKey(DensityPlayerPrefsKey))
+            {
+                maxAverageDensity = PlayerPrefs.GetFloat(DensityPlayerPrefsKey);
+            }
+            PeripageBitmapProtocol.MaxAverageDensity = maxAverageDensity;
         }
 
         void Start()
         {
             RequestBluetoothPermissions();
+        }
+
+#if UNITY_EDITOR
+        // Keeps the protocol's live value in sync while dragging the Inspector
+        // slider in Play Mode, without needing a UI Slider at all.
+        void OnValidate()
+        {
+            PeripageBitmapProtocol.VerticalAspectCorrection = verticalAspectCorrection;
+            PeripageBitmapProtocol.MaxAverageDensity = maxAverageDensity;
+        }
+#endif
+
+        /// <summary>
+        /// Bind this to a UI Slider's onValueChanged for a live calibration
+        /// panel. Updates the Inspector-visible field, pushes the value into
+        /// PeripageBitmapProtocol.VerticalAspectCorrection immediately (so the
+        /// very next preview/print reflects it), persists it via PlayerPrefs,
+        /// and raises OnCalibrationChanged so any listening UI (e.g. a value
+        /// label) can update without polling.
+        /// </summary>
+        public void SetVerticalAspectCorrection(float value)
+        {
+            PeripageBitmapProtocol.VerticalAspectCorrection = value; // clamps internally (0.1–5.0)
+            verticalAspectCorrection = PeripageBitmapProtocol.VerticalAspectCorrection;
+            PlayerPrefs.SetFloat(CalibrationPlayerPrefsKey, verticalAspectCorrection);
+            OnCalibrationChanged?.Invoke(verticalAspectCorrection);
+        }
+
+        public float GetVerticalAspectCorrection() => PeripageBitmapProtocol.VerticalAspectCorrection;
+
+        /// <summary>
+        /// Bind this to a UI Slider's onValueChanged for a live "dot density"
+        /// panel. Updates the Inspector-visible field, pushes the value into
+        /// PeripageBitmapProtocol.MaxAverageDensity immediately (so the very
+        /// next preview/print reflects it), persists it via PlayerPrefs, and
+        /// raises OnDensityChanged so any listening UI (e.g. a value label)
+        /// can update without polling.
+        /// </summary>
+        public void SetMaxAverageDensity(float value)
+        {
+            PeripageBitmapProtocol.MaxAverageDensity = value; // clamps internally (0.05–0.9)
+            maxAverageDensity = PeripageBitmapProtocol.MaxAverageDensity;
+            PlayerPrefs.SetFloat(DensityPlayerPrefsKey, maxAverageDensity);
+            OnDensityChanged?.Invoke(maxAverageDensity);
+        }
+
+        public float GetMaxAverageDensity() => PeripageBitmapProtocol.MaxAverageDensity;
+
+        /// <summary>
+        /// Convenience wrapper for a "Print calibration square" button on a
+        /// debug panel: builds PeripageBitmapProtocol.BuildCalibrationSquareTexture()
+        /// and sends it through the normal PrintPhoto path. Print this with
+        /// verticalAspectCorrection at 1.0, measure the result with a ruler,
+        /// compute the real correction, dial it in with the slider, and
+        /// reprint to confirm.
+        /// </summary>
+        public void PrintCalibrationSquare(int squareSizePx = PeripageBitmapProtocol.PRINTER_WIDTH_PX)
+        {
+            Texture2D square = PeripageBitmapProtocol.BuildCalibrationSquareTexture(squareSizePx);
+            PrintPhoto(square);
+            Destroy(square);
         }
 
         private void RequestBluetoothPermissions()
@@ -175,21 +291,32 @@ namespace TechArt.Module.Peripage
             }
     #endif
 
-            // Resize to the printer's native width — the library handles the
-            // actual monochrome/dithering conversion internally, we just need
-            // to hand it a reasonably-sized image rather than a huge photo.
-            Texture2D resized = ResizeToPrinterWidth(source, PRINTER_WIDTH_PX);
-            byte[] pngBytes = resized.EncodeToPNG();
+            // Resize to the printer's native width — via the same
+            // PeripageBitmapProtocol.ResizeToWidth used by the preview path
+            // (UIPeripagePrintDemo -> BuildDitheredPreview), so the print and
+            // its preview always apply the identical resize + vertical dot-pitch
+            // correction (PeripageBitmapProtocol.VerticalAspectCorrection) and
+            // can't drift out of sync. The bridge/library still handles
+            // monochrome thresholding/dithering internally on top of this.
+            Texture2D resized = PeripageBitmapProtocol.ResizeToWidth(source, PeripageBitmapProtocol.PRINTER_WIDTH_PX);
+
+            // Add the blank cut margin here, post-resize/pre-encode, so it
+            // rides along as ordinary white pixel rows through whatever
+            // bridge-side PNG-decode-and-pack happens next — no bridge needs
+            // to know a margin exists.
+            Texture2D withMargin = PeripageBitmapProtocol.AppendBottomMargin(resized, bottomCutMarginMm);
+            byte[] pngBytes = withMargin.EncodeToPNG();
 
     #if UNITY_EDITOR
             if (saveMockPrintPreviewPng && _bridge is PeripageEditorMockBridge)
             {
-                SavePreviewPng(resized);
+                SavePreviewPng(withMargin);
             }
     #endif
 
             _bridge.PrintBitmap(pngBytes);
 
+            if (withMargin != resized) Destroy(withMargin);
             if (resized != source) Destroy(resized);
         }
 
@@ -216,27 +343,6 @@ namespace TechArt.Module.Peripage
             }
         }
     #endif
-
-        // ---------- Image conversion ----------
-
-        private Texture2D ResizeToPrinterWidth(Texture2D source, int targetWidth)
-        {
-            if (source.width == targetWidth) return source;
-
-            int targetHeight = Mathf.RoundToInt(source.height * (targetWidth / (float)source.width));
-            RenderTexture rt = RenderTexture.GetTemporary(targetWidth, targetHeight);
-            Graphics.Blit(source, rt);
-
-            RenderTexture prev = RenderTexture.active;
-            RenderTexture.active = rt;
-            Texture2D resized = new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, false);
-            resized.ReadPixels(new Rect(0, 0, targetWidth, targetHeight), 0, 0);
-            resized.Apply();
-            RenderTexture.active = prev;
-            RenderTexture.ReleaseTemporary(rt);
-
-            return resized;
-        }
 
         // ---------- Callbacks invoked by Kotlin via UnitySendMessage ----------
         // Method names below must exactly match what PeripageBridge.sendToUnity() calls.

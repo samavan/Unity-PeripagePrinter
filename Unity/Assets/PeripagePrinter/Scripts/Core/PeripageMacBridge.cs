@@ -110,7 +110,16 @@ namespace TechArt.Module.Peripage
             ok &= SendChunk(PeripageBitmapProtocol.PRINT_PADDING);
             ok &= SendChunk(PeripageBitmapProtocol.BuildRasterHeader(width, height));
 
-            int chunkSize = PeripageBitmapProtocol.RECOMMENDED_CHUNK_SIZE;
+            // Chunk in whole rows (one row per write, matching the
+            // linglingltd/peripage-a6-control reference for this exact
+            // hardware), not a flat byte count: Peripage_SendBytes is a
+            // discrete write per call (BLE GATT under the hood, not a
+            // continuous RFCOMM stream), so a chunk boundary that lands
+            // mid-row desyncs the printer's row framing and the
+            // misalignment compounds down the image. See
+            // PeripageBitmapProtocol.GetRowAlignedChunkSize for details.
+            int bytesPerRow = (width + 7) / 8;
+            int chunkSize = PeripageBitmapProtocol.GetRowAlignedChunkSize(bytesPerRow);
             for (int offset = 0; offset < packedBitmap.Length && ok; offset += chunkSize)
             {
                 int len = Mathf.Min(chunkSize, packedBitmap.Length - offset);
