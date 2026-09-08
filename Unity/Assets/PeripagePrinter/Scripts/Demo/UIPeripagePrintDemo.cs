@@ -2,6 +2,7 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
 using TechArt.Module.Peripage;
+using TMPro;
 
 namespace TechArt.Module.Peripage.Demo
 {
@@ -43,8 +44,17 @@ namespace TechArt.Module.Peripage.Demo
         [SerializeField] private Button captureButton;
 
         [Header("Print")]
+        [Tooltip("Prints the last capture, rotated per rotationDropdown's selection.")]
         [SerializeField] private Button printButton;
         [SerializeField] private PeripagePrinterManager printerManager;
+
+        [Header("Rotation")]
+        [Tooltip("Selects the orientation Print sends to the printer. \"Original\" (index 0) " +
+                 "prints as captured. \"180°\" (index 1) rotates the last capture 180° first — " +
+                 "for a printer mounted upside-down (e.g. built into a kiosk enclosure) so the " +
+                 "physical output reads right-side up. If left with no options configured in the " +
+                 "Inspector, Start() populates it with these two entries automatically.")]
+        [SerializeField] private TMP_Dropdown rotationDropdown;
 
         [Header("Behaviour")]
         [Tooltip("Automatically refresh both previews every frame. Turn off and use " +
@@ -105,6 +115,14 @@ namespace TechArt.Module.Peripage.Demo
             if (printButton != null)
             {
                 printButton.onClick.AddListener(OnPrintPressed);
+            }
+
+            if (rotationDropdown != null)
+            {
+                rotationDropdown.ClearOptions();
+                rotationDropdown.AddOptions(new System.Collections.Generic.List<string> { "Original", "180°" });
+                rotationDropdown.value = 0;
+                rotationDropdown.RefreshShownValue();
             }
 
             if (printerManager == null)
@@ -342,13 +360,49 @@ namespace TechArt.Module.Peripage.Demo
         }
 
         /// <summary>
-        /// Print button handler: captures a fresh, full-quality (non-thresholded)
-        /// crop and hands it to PeripagePrinterManager, which already knows how
-        /// to resize/encode/send it through whichever bridge is active.
+        /// Print button handler: sends whatever's currently in _lastCapture
+        /// (i.e. exactly what the user is looking at in the preview) to
+        /// PeripagePrinterManager, rotated 180° first if rotationDropdown is
+        /// set to that option.
         /// </summary>
         public void OnPrintPressed()
         {
-            StartCoroutine(CaptureAndPrintNextFrame());
+            PrintLastCapture(rotate180: IsRotation180Selected());
+        }
+
+        /// <summary>
+        /// Index 1 ("180°") in rotationDropdown means rotate; index 0
+        /// ("Original") or no dropdown assigned means print as captured.
+        /// </summary>
+        private bool IsRotation180Selected()
+        {
+            return rotationDropdown != null && rotationDropdown.value == 1;
+        }
+
+        /// <summary>
+        /// Shared print logic: sends _lastCapture (i.e. exactly what the user
+        /// is looking at in the preview) to PeripagePrinterManager, which
+        /// already knows how to resize/encode/send it through whichever
+        /// bridge is active. Deliberately does NOT re-capture the screen —
+        /// printing must reproduce the previewed image, not whatever
+        /// printZone happens to contain at click time. Use the Capture
+        /// button (or RefreshPreview()) first to populate _lastCapture.
+        /// </summary>
+        private void PrintLastCapture(bool rotate180)
+        {
+            if (_lastCapture == null)
+            {
+                Debug.LogWarning("[UIPeripagePrintDemo] No capture available to print — press Capture first.");
+                return;
+            }
+
+            if (printerManager == null)
+            {
+                Debug.LogWarning("[UIPeripagePrintDemo] No PeripagePrinterManager assigned/found — cannot print.");
+                return;
+            }
+
+            printerManager.PrintPhoto(_lastCapture, rotate180);
         }
 
         #endregion
@@ -410,27 +464,6 @@ namespace TechArt.Module.Peripage.Demo
         {
             yield return new WaitForEndOfFrame();
             RefreshPreview();
-        }
-
-        private IEnumerator CaptureAndPrintNextFrame()
-        {
-            // Wait for end of frame so any UI just interacted with (e.g. the
-            // Print button's own pressed-state visuals) doesn't get baked into
-            // the capture.
-            yield return new WaitForEndOfFrame();
-
-            Rect screenRect = GetScreenRectForPrintZone();
-            Texture2D capture = CaptureScreenRegion(screenRect);
-
-            if (printerManager == null)
-            {
-                Debug.LogWarning("[UIPeripagePrintDemo] No PeripagePrinterManager assigned/found — cannot print.");
-                Destroy(capture);
-                yield break;
-            }
-
-            printerManager.PrintPhoto(capture);
-            Destroy(capture); // PrintPhoto already copies what it needs (resizes internally)
         }
 
         #endregion

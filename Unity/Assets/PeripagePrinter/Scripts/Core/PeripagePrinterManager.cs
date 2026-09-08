@@ -271,7 +271,17 @@ namespace TechArt.Module.Peripage
         /// bitmap format and sends it to the printer. Handles resizing to the
         /// printer's native width and basic thresholding to monochrome.
         /// </summary>
-        public void PrintPhoto(Texture2D source)
+        /// <param name="source">The image to print.</param>
+        /// <param name="rotate180">
+        /// Pass true when the printer is mounted upside-down (e.g. built into
+        /// a kiosk enclosure) so the physical output reads right-side up.
+        /// Applied FIRST, before resize/margin — not after — so the blank cut
+        /// margin (bottomCutMarginMm) still ends up physically last on the
+        /// paper regardless of rotation. Rotating post-margin would instead
+        /// put the blank margin at the top of the physical print and the
+        /// image flush against the cut line, which is exactly backwards.
+        /// </param>
+        public void PrintPhoto(Texture2D source, bool rotate180 = false)
         {
             if (!_initialized || _bridge == null)
             {
@@ -291,6 +301,8 @@ namespace TechArt.Module.Peripage
             }
     #endif
 
+            Texture2D rotated = rotate180 ? PeripageBitmapProtocol.Rotate180(source) : source;
+
             // Resize to the printer's native width — via the same
             // PeripageBitmapProtocol.ResizeToWidth used by the preview path
             // (UIPeripagePrintDemo -> BuildDitheredPreview), so the print and
@@ -298,7 +310,7 @@ namespace TechArt.Module.Peripage
             // correction (PeripageBitmapProtocol.VerticalAspectCorrection) and
             // can't drift out of sync. The bridge/library still handles
             // monochrome thresholding/dithering internally on top of this.
-            Texture2D resized = PeripageBitmapProtocol.ResizeToWidth(source, PeripageBitmapProtocol.PRINTER_WIDTH_PX);
+            Texture2D resized = PeripageBitmapProtocol.ResizeToWidth(rotated, PeripageBitmapProtocol.PRINTER_WIDTH_PX);
 
             // Add the blank cut margin here, post-resize/pre-encode, so it
             // rides along as ordinary white pixel rows through whatever
@@ -317,7 +329,8 @@ namespace TechArt.Module.Peripage
             _bridge.PrintBitmap(pngBytes);
 
             if (withMargin != resized) Destroy(withMargin);
-            if (resized != source) Destroy(resized);
+            if (resized != rotated) Destroy(resized);
+            if (rotated != source) Destroy(rotated);
         }
 
     #if UNITY_EDITOR

@@ -238,6 +238,39 @@ namespace TechArt.Module.Peripage
         }
 
         /// <summary>
+        /// Returns a new texture rotated 180 degrees — useful when the printer
+        /// is mounted upside-down (e.g. built into a kiosk enclosure) so the
+        /// physical output reads right-side up. Implemented as a straight
+        /// reversal of the pixel array: for any row-major image, pixel i's
+        /// 180-degree destination is (length-1-i), because rotating 180
+        /// degrees maps (x,y) -> (width-1-x, height-1-y), and that maps index
+        /// y*width+x -> (height-1-y)*width+(width-1-x) = (length-1)-(y*width+x).
+        /// So it's origin-agnostic — works the same whether the source is
+        /// top-left or bottom-left origin, no width/height bookkeeping needed.
+        /// Always returns a brand-new Texture2D (RGB24), same convention as
+        /// ResizeToWidth — never the original reference. Caller owns (and
+        /// should Destroy) the returned texture.
+        /// </summary>
+        public static Texture2D Rotate180(Texture2D source)
+        {
+            int width = source.width;
+            int height = source.height;
+            Color32[] src = source.GetPixels32();
+            Color32[] dst = new Color32[src.Length];
+
+            int last = src.Length - 1;
+            for (int i = 0; i < src.Length; i++)
+            {
+                dst[i] = src[last - i];
+            }
+
+            Texture2D rotated = new Texture2D(width, height, TextureFormat.RGB24, false);
+            rotated.SetPixels32(dst);
+            rotated.Apply();
+            return rotated;
+        }
+
+        /// <summary>
         /// Resizes a texture to the given width, preserving aspect ratio and
         /// applying VerticalAspectCorrection to compensate for the printer's
         /// non-square dot pitch (see that property's doc comment). Defaults to
