@@ -1,0 +1,18 @@
+{
+    "name": "TechArt.Module.Peripage.Demo",
+    "rootNamespace": "TechArt.Module.Peripage.Demo",
+    "references": [
+        "TechArt.Module.Peripage",
+        "UnityEngine.UI",
+        "Unity.TextMeshPro"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
