@@ -214,8 +214,8 @@ namespace TechArt.Module.Peripage
 
         private void InitBridge()
         {
-    #if UNITY_ANDROID && !UNITY_EDITOR
-            _bridge = new PeripageAndroidBridge(gameObject.name);
+    #if UNITY_ANDROID
+            _bridge = new PeripageAndroidBridge(gameObject.name, this);
             _initialized = true;
     #elif UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX
             // Real Mac path: talks to the same PeripageMacNative plugin that

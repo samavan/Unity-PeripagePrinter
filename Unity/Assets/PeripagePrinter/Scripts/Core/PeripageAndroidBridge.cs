@@ -2,45 +2,88 @@ using UnityEngine;
 
 namespace TechArt.Module.Peripage
 {
-    /// <summary>
-    /// Real Android implementation — wraps the Kotlin PeripageBridge via
-    /// AndroidJavaObject. Only ever instantiated on-device (UNITY_ANDROID &&
-    /// !UNITY_EDITOR); see PeripagePrinterManager for the platform switch.
-    /// </summary>
     public class PeripageAndroidBridge : IPeripageBridge
     {
         private readonly AndroidJavaObject _bridge;
+        private readonly PeripagePrinterManager _manager;
 
-        public PeripageAndroidBridge(string unityGameObjectName)
+        public PeripageAndroidBridge(string unityGameObjectName, PeripagePrinterManager manager)
         {
-    #if UNITY_ANDROID && !UNITY_EDITOR
-            using (var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
+            _manager = manager;
+#if UNITY_ANDROID && !UNITY_EDITOR
+        using (var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
+        {
+            var activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
+            _bridge = new AndroidJavaObject("com.kiosk.peripage.PeripageBridge", activity);
+            _bridge.Call("init", unityGameObjectName);
+        }
+#endif
+        }
+
+        public void Connect(string macAddressOrName)
+        {
+            if (_bridge == null) return;
+
+            if (LooksLikeMacAddress(macAddressOrName))
             {
-                var activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
-                _bridge = new AndroidJavaObject("com.kiosk.peripage.PeripageBridge", activity);
-                _bridge.Call("init", unityGameObjectName);
+                _bridge.Call("connect", macAddressOrName);
+                return;
             }
-    #endif
+
+            // Kiosk printer is pre-paired once via Android Bluetooth settings;
+            // PeripagePrinterManager configures it by broadcast name (human
+            // readable), so resolve that to a MAC via the paired-device list.
+            string[] paired = _bridge.Call<string[]>("getPairedPrinters");
+            foreach (var entry in paired)
+            {
+                int sep = entry.IndexOf('|');
+                if (sep < 0) continue;
+                string name = entry.Substring(0, sep);
+                string mac = entry.Substring(sep + 1);
+                if (name.IndexOf(macAddressOrName, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    _bridge.Call("connect", mac);
+                    return;
+                }
+            }
+
+            Debug.LogWarning($"[PeripageAndroidBridge] No paired device matching '{macAddressOrName}'. " +
+                              "Pair it once in Android Bluetooth settings first.");
+            _manager?.OnConnectFailedCallback($"no paired device matching '{macAddressOrName}'");
         }
 
-        public void Connect(string macAddress)
-        {
-            _bridge?.Call("connect", macAddress);
-        }
+        private static bool LooksLikeMacAddress(string s) =>
+            System.Text.RegularExpressions.Regex.IsMatch(s, @"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$");
 
-        public void Disconnect()
-        {
-            _bridge?.Call("disconnect");
-        }
+        public void Disconnect() => _bridge?.Call("disconnect");
+        public bool IsConnected() => _bridge != null && _bridge.Call<bool>("isConnected");
 
-        public bool IsConnected()
+        public void PrintBitmap(byte[] pngBytes)
         {
-            return _bridge != null && _bridge.Call<bool>("isConnected");
-        }
+            bool decoded = PeripageBitmapProtocol.TryConvertPngToPackedBitmap(
+                pngBytes, out byte[] packed, out int width, out int height);
 
-        public void PrintBitmap(byte[] imageBytes)
-        {
-            _bridge?.Call("printImageBytes", imageBytes);
+            if (!decoded)
+            {
+                _manager?.OnPrintFailedCallback("failed to decode image (android)");
+                return;
+            }
+
+            byte[] header = PeripageBitmapProtocol.BuildRasterHeader(width, height);
+            byte[] framed = new byte[
+                PeripageBitmapProtocol.PRINT_PREFIX.Length +
+                PeripageBitmapProtocol.PRINT_PADDING.Length +
+                header.Length + packed.Length +
+                PeripageBitmapProtocol.PRINT_FOOTER.Length];
+
+            int o = 0;
+            System.Array.Copy(PeripageBitmapProtocol.PRINT_PREFIX, 0, framed, o, PeripageBitmapProtocol.PRINT_PREFIX.Length); o += PeripageBitmapProtocol.PRINT_PREFIX.Length;
+            System.Array.Copy(PeripageBitmapProtocol.PRINT_PADDING, 0, framed, o, PeripageBitmapProtocol.PRINT_PADDING.Length); o += PeripageBitmapProtocol.PRINT_PADDING.Length;
+            System.Array.Copy(header, 0, framed, o, header.Length); o += header.Length;
+            System.Array.Copy(packed, 0, framed, o, packed.Length); o += packed.Length;
+            System.Array.Copy(PeripageBitmapProtocol.PRINT_FOOTER, 0, framed, o, PeripageBitmapProtocol.PRINT_FOOTER.Length);
+
+            _bridge?.Call("printRaw", framed);
         }
     }
 }
