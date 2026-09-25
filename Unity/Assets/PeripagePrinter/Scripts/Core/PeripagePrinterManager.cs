@@ -195,20 +195,14 @@ namespace TechArt.Module.Peripage
 
         private void RequestBluetoothPermissions()
         {
-    #if UNITY_ANDROID && !UNITY_EDITOR
-            if (!Permission.HasUserAuthorizedPermission("android.permission.BLUETOOTH_CONNECT"))
-            {
-                Permission.RequestUserPermission("android.permission.BLUETOOTH_CONNECT");
-            }
-            if (!Permission.HasUserAuthorizedPermission("android.permission.BLUETOOTH_SCAN"))
-            {
-                Permission.RequestUserPermission("android.permission.BLUETOOTH_SCAN");
-            }
-            // On a kiosk, permissions can also just be granted once at setup time
-            // via adb, so you don't have to handle the prompt UI at runtime:
-            //   adb shell pm grant <package> android.permission.BLUETOOTH_CONNECT
-            //   adb shell pm grant <package> android.permission.BLUETOOTH_SCAN
-    #endif
+#if UNITY_ANDROID && !UNITY_EDITOR
+            bool hasConnect = Permission.HasUserAuthorizedPermission("android.permission.BLUETOOTH_CONNECT");
+            bool hasScan = Permission.HasUserAuthorizedPermission("android.permission.BLUETOOTH_SCAN");
+            Debug.Log($"[PeripagePrinterManager] Permissions before request — CONNECT: {hasConnect}, SCAN: {hasScan}");
+
+            if (!hasConnect) Permission.RequestUserPermission("android.permission.BLUETOOTH_CONNECT");
+            if (!hasScan) Permission.RequestUserPermission("android.permission.BLUETOOTH_SCAN");
+#endif
             InitBridge();
         }
 
@@ -248,11 +242,14 @@ namespace TechArt.Module.Peripage
     #endif
         }
 
-        public void Connect()
+        public void Connect() => Connect(printerName);
+
+        public void Connect(string addressOrName)
         {
             if (!_initialized) { Debug.LogWarning("Bridge not initialized yet"); return; }
-            _bridge.Connect(printerName);
+            _bridge.Connect(addressOrName);
         }
+
 
         public void Disconnect()
         {
@@ -264,6 +261,20 @@ namespace TechArt.Module.Peripage
         {
             if (!_initialized) return false;
             return _bridge.IsConnected();
+        }
+
+        public bool IsInitialized => _initialized;
+
+        public string[] GetPairedPrinters()
+        {
+            if (_bridge is PeripageAndroidBridge androidBridge)
+            {
+                return androidBridge.GetPairedPrinters();
+            }
+
+            Debug.LogWarning($"[PeripagePrinterManager] GetPairedPrinters called but active bridge is " +
+                $"{(_bridge == null ? "NULL — InitBridge() hasn't run yet (likely a Start() ordering race)" : _bridge.GetType().Name)}.");
+            return Array.Empty<string>();
         }
 
         /// <summary>

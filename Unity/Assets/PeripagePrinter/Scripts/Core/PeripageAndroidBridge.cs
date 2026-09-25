@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 namespace TechArt.Module.Peripage
@@ -11,12 +12,25 @@ namespace TechArt.Module.Peripage
         {
             _manager = manager;
 #if UNITY_ANDROID && !UNITY_EDITOR
+    try
+    {
+        Debug.Log("[PeripageAndroidBridge] Creating native bridge...");
         using (var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
         {
             var activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
+            Debug.Log($"[PeripageAndroidBridge] currentActivity: {(activity != null ? "OK" : "NULL")}");
             _bridge = new AndroidJavaObject("com.kiosk.peripage.PeripageBridge", activity);
+            Debug.Log("[PeripageAndroidBridge] Native object constructed.");
             _bridge.Call("init", unityGameObjectName);
+            Debug.Log($"[PeripageAndroidBridge] init('{unityGameObjectName}') called.");
         }
+    }
+    catch (Exception e)
+    {
+        Debug.LogError($"[PeripageAndroidBridge] FAILED to create/init native bridge: {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
+    }
+#else
+            Debug.LogWarning("[PeripageAndroidBridge] Not an Android device build — _bridge stays null.");
 #endif
         }
 
@@ -33,8 +47,7 @@ namespace TechArt.Module.Peripage
             // Kiosk printer is pre-paired once via Android Bluetooth settings;
             // PeripagePrinterManager configures it by broadcast name (human
             // readable), so resolve that to a MAC via the paired-device list.
-            string[] paired = _bridge.Call<string[]>("getPairedPrinters");
-            foreach (var entry in paired)
+            foreach (var entry in GetPairedPrinters())
             {
                 int sep = entry.IndexOf('|');
                 if (sep < 0) continue;
@@ -50,6 +63,40 @@ namespace TechArt.Module.Peripage
             Debug.LogWarning($"[PeripageAndroidBridge] No paired device matching '{macAddressOrName}'. " +
                               "Pair it once in Android Bluetooth settings first.");
             _manager?.OnConnectFailedCallback($"no paired device matching '{macAddressOrName}'");
+        }
+
+        /// <summary>
+        /// Raw "Name|MAC" entries for every Bluetooth device already paired
+        /// via Android's OS Bluetooth settings. Used internally by Connect()'s
+        /// name-matching fallback above, and externally by
+        /// PeripageAndroidDeviceDiscovery to show a pick list — Android has no
+        /// live-scan discovery UI of its own; kiosks pair once via OS settings
+        /// instead, same underlying connection either way.
+        /// </summary>
+        public string[] GetPairedPrinters()
+        {
+            if (_bridge == null)
+            {
+                Debug.LogWarning("[PeripageAndroidBridge] GetPairedPrinters: _bridge is null (see constructor logs above).");
+                return Array.Empty<string>();
+            }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+    bool hasConnect = UnityEngine.Android.Permission.HasUserAuthorizedPermission("android.permission.BLUETOOTH_CONNECT");
+    Debug.Log($"[PeripageAndroidBridge] GetPairedPrinters: BLUETOOTH_CONNECT granted = {hasConnect}");
+#endif
+
+            try
+            {
+                string[] result = _bridge.Call<string[]>("getPairedPrinters");
+                Debug.Log($"[PeripageAndroidBridge] getPairedPrinters() returned {result.Length} entries: [{string.Join(", ", result)}]");
+                return result;
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[PeripageAndroidBridge] getPairedPrinters() threw: {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
+                return Array.Empty<string>();
+            }
         }
 
         private static bool LooksLikeMacAddress(string s) =>

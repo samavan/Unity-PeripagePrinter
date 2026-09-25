@@ -14,22 +14,18 @@ namespace TechArt.Module.Peripage
     ///
     /// Only meaningful on Mac (Editor or standalone) — the native plugin this
     /// wraps is a macOS-only .bundle (IOBluetooth). On other platforms, the
-    /// device list stays empty and Connect() no-ops; use the Android path
-    /// (PeripagePrinterManager + PeripageAndroidBridge) for the real device.
+    /// device list stays empty and Connect() no-ops; use
+    /// PeripageAndroidDeviceDiscovery on Android instead.
+    ///
+    /// Implements IPeripageDeviceDiscovery so UI code (UIPeripageDiscovery)
+    /// can drive this or PeripageAndroidDeviceDiscovery interchangeably.
     /// </summary>
-    public class PeripageMacDeviceDiscovery : MonoBehaviour
+    public class PeripageMacDeviceDiscovery : MonoBehaviour, IPeripageDeviceDiscovery
     {
-        [Serializable]
-        public class DiscoveredDevice
-        {
-            public string name;
-            public string address;
-        }
-
-        public List<DiscoveredDevice> devices = new List<DiscoveredDevice>();
-        public string selectedAddress;
-        public bool isScanning;
-        public bool isConnected;
+        [field: SerializeField] public List<PeripageDiscoveredDevice> Devices { get; private set; } = new List<PeripageDiscoveredDevice>();
+        [field: SerializeField] public string SelectedAddress { get; private set; }
+        [field: SerializeField] public bool IsScanning { get; private set; }
+        [field: SerializeField] public bool IsConnected { get; private set; }
 
         public event Action OnDevicesUpdated;
         public event Action OnConnected;
@@ -48,29 +44,29 @@ namespace TechArt.Module.Peripage
             _pollTimer = 0f;
 
             bool scanningNow = PeripageMacNative.Peripage_IsScanning() == 1;
-            if (isScanning && scanningNow != isScanning && !_scanFinishedLogged)
+            if (IsScanning && scanningNow != IsScanning && !_scanFinishedLogged)
             {
                 _scanFinishedLogged = true;
-                Debug.Log(devices.Count > 0
-                    ? $"[PeripageMacDeviceDiscovery] Scan finished — {devices.Count} device(s) found."
+                Debug.Log(Devices.Count > 0
+                    ? $"[PeripageMacDeviceDiscovery] Scan finished — {Devices.Count} device(s) found."
                     : "[PeripageMacDeviceDiscovery] Scan finished — no devices found.");
             }
-            isScanning = scanningNow;
+            IsScanning = scanningNow;
 
             RefreshDeviceListFromNative();
 
             bool connectedNow = PeripageMacNative.Peripage_IsConnected() == 1;
-            if (connectedNow && !isConnected)
+            if (connectedNow && !IsConnected)
             {
-                isConnected = true;
+                IsConnected = true;
                 _connectedAt = Time.realtimeSinceStartup;
                 _connectFailedLogged = false; // clear so a future failed attempt can log again
-                Debug.Log($"[PeripageMacDeviceDiscovery] Connected to {selectedAddress}.");
+                Debug.Log($"[PeripageMacDeviceDiscovery] Connected to {SelectedAddress}.");
                 OnConnected?.Invoke();
             }
-            else if (!connectedNow && isConnected)
+            else if (!connectedNow && IsConnected)
             {
-                isConnected = false;
+                IsConnected = false;
                 float heldFor = Time.realtimeSinceStartup - _connectedAt;
                 Debug.LogWarning($"[PeripageMacDeviceDiscovery] Connection dropped — was connected for {heldFor:F1}s.");
             }
@@ -80,7 +76,7 @@ namespace TechArt.Module.Peripage
             // guard, this would re-log every single poll (every 0.5s) forever after any
             // failed attempt. Only report it once; ConfirmAndConnect()/StartScan() reset
             // the guard so the next real attempt can report its own failure.
-            if (PeripageMacNative.Peripage_LastConnectFailed() == 1 && !isConnected && !_connectFailedLogged)
+            if (PeripageMacNative.Peripage_LastConnectFailed() == 1 && !IsConnected && !_connectFailedLogged)
             {
                 _connectFailedLogged = true;
                 Debug.LogWarning("[PeripageMacDeviceDiscovery] Connect failed (native reported LastConnectFailed).");
@@ -95,19 +91,17 @@ namespace TechArt.Module.Peripage
         private void RefreshDeviceListFromNative()
         {
             int count = PeripageMacNative.Peripage_GetDeviceCount();
-            if (count == devices.Count) return; // cheap check to avoid rebuilding every poll
+            if (count == Devices.Count) return; // cheap check to avoid rebuilding every poll
 
-            devices.Clear();
+            Devices.Clear();
             for (int i = 0; i < count; i++)
             {
-                devices.Add(new DiscoveredDevice
-                {
-                    name = PeripageMacNative.GetDeviceName(i),
-                    address = PeripageMacNative.GetDeviceAddress(i)
-                });
+                Devices.Add(new PeripageDiscoveredDevice(
+                    PeripageMacNative.GetDeviceName(i),
+                    PeripageMacNative.GetDeviceAddress(i)));
             }
             Debug.Log($"[PeripageMacDeviceDiscovery] Found {count} device(s):");
-            foreach (var d in devices)
+            foreach (var d in Devices)
             {
                 Debug.Log($"  - {d.name} ({d.address})");
             }
@@ -118,12 +112,12 @@ namespace TechArt.Module.Peripage
         [ContextMenu("1. Start Scan")]
         public void StartScan()
         {
-            devices.Clear();
-            selectedAddress = null;
+            Devices.Clear();
+            SelectedAddress = null;
             _scanFinishedLogged = false;
             Debug.Log("[PeripageMacDeviceDiscovery] Starting scan...");
             PeripageMacNative.Peripage_StartScan();
-            isScanning = true;
+            IsScanning = true;
         }
 
         /// <summary>Step 2: explicit refresh button — same as StartScan, named for UI clarity.</summary>
@@ -132,41 +126,41 @@ namespace TechArt.Module.Peripage
         /// <summary>Step 3: called when the user taps/clicks a device in the list.</summary>
         public void SelectDevice(string address)
         {
-            selectedAddress = address;
+            SelectedAddress = address;
         }
 
         /// <summary>Steps 4/5: user pressed OK — connect to the selected device.</summary>
         [ContextMenu("3. Connect To First Found Device")]
         public void ConnectToFirstFoundDevice()
         {
-            if (devices.Count == 0)
+            if (Devices.Count == 0)
             {
                 Debug.LogWarning("No devices found yet — run Start Scan first and wait a few seconds.");
                 return;
             }
-            SelectDevice(devices[0].address);
-            Debug.Log($"Connecting to {devices[0].name} ({devices[0].address})...");
+            SelectDevice(Devices[0].address);
+            Debug.Log($"Connecting to {Devices[0].name} ({Devices[0].address})...");
             ConfirmAndConnect();
         }
 
         public void ConfirmAndConnect()
         {
-            if (string.IsNullOrEmpty(selectedAddress))
+            if (string.IsNullOrEmpty(SelectedAddress))
             {
                 Debug.LogWarning("[PeripageMacDeviceDiscovery] ConfirmAndConnect called with no device selected.");
                 OnConnectFailed?.Invoke("No device selected");
                 return;
             }
             _connectFailedLogged = false;
-            Debug.Log($"[PeripageMacDeviceDiscovery] Connecting to {selectedAddress}...");
-            PeripageMacNative.Peripage_Connect(selectedAddress);
+            Debug.Log($"[PeripageMacDeviceDiscovery] Connecting to {SelectedAddress}...");
+            PeripageMacNative.Peripage_Connect(SelectedAddress);
         }
 
         public void Disconnect()
         {
             Debug.Log("[PeripageMacDeviceDiscovery] Disconnect requested.");
             PeripageMacNative.Peripage_Disconnect();
-            isConnected = false;
+            IsConnected = false;
         }
 
         public bool SendBytes(byte[] data)
