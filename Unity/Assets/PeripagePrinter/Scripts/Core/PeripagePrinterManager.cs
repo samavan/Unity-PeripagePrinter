@@ -24,7 +24,13 @@ namespace TechArt.Module.Peripage
     /// </summary>
     public class PeripagePrinterManager : MonoBehaviour
     {
+        #region Singleton
+
         public static PeripagePrinterManager Instance { get; private set; }
+
+        #endregion
+
+        #region Inspector
 
         [Header("Printer")]
         [Tooltip("Bluetooth broadcast name of the kiosk's paired Peripage printer " +
@@ -62,9 +68,6 @@ namespace TechArt.Module.Peripage
         [Range(0.5f, 2f)]
         public float verticalAspectCorrection = PeripageBitmapProtocol.DEFAULT_VERTICAL_ASPECT_CORRECTION;
 
-        /// <summary>Raised whenever the calibration value changes (Inspector, PlayerPrefs load, or SetVerticalAspectCorrection), so a debug UI can keep its slider/label in sync without polling.</summary>
-        public event Action<float> OnCalibrationChanged;
-
         private const string CalibrationPlayerPrefsKey = "Peripage_VerticalAspectCorrection";
 
         [Header("Dot density")]
@@ -77,9 +80,6 @@ namespace TechArt.Module.Peripage
                  "match. Persisted across sessions (PlayerPrefs).")]
         [Range(0.05f, 0.9f)]
         public float maxAverageDensity = PeripageBitmapProtocol.DEFAULT_MAX_AVERAGE_DENSITY;
-
-        /// <summary>Raised whenever maxAverageDensity changes (Inspector, PlayerPrefs load, or SetMaxAverageDensity), so a debug UI can keep its slider/label in sync without polling.</summary>
-        public event Action<float> OnDensityChanged;
 
         private const string DensityPlayerPrefsKey = "Peripage_MaxAverageDensity";
 
@@ -98,13 +98,31 @@ namespace TechArt.Module.Peripage
                  "the full raster print path. Uncheck to restore normal printing.")]
         public bool debugTinyTestPrintOnly = false;
 
+        #endregion
+
+        #region Events
+
+        /// <summary>Raised whenever the calibration value changes (Inspector, PlayerPrefs load, or SetVerticalAspectCorrection), so a debug UI can keep its slider/label in sync without polling.</summary>
+        public event Action<float> OnCalibrationChanged;
+
+        /// <summary>Raised whenever maxAverageDensity changes (Inspector, PlayerPrefs load, or SetMaxAverageDensity), so a debug UI can keep its slider/label in sync without polling.</summary>
+        public event Action<float> OnDensityChanged;
+
         public event Action OnConnected;
         public event Action<string> OnConnectFailed;
         public event Action OnPrintComplete;
         public event Action<string> OnPrintFailed;
 
+        #endregion
+
+        #region Private Fields
+
         private IPeripageBridge _bridge;
         private bool _initialized;
+
+        #endregion
+
+        #region Unity Lifecycle
 
         void Awake()
         {
@@ -142,6 +160,10 @@ namespace TechArt.Module.Peripage
         }
 #endif
 
+        #endregion
+
+        #region Calibration
+
         /// <summary>
         /// Bind this to a UI Slider's onValueChanged for a live calibration
         /// panel. Updates the Inspector-visible field, pushes the value into
@@ -161,6 +183,25 @@ namespace TechArt.Module.Peripage
         public float GetVerticalAspectCorrection() => PeripageBitmapProtocol.VerticalAspectCorrection;
 
         /// <summary>
+        /// Convenience wrapper for a "Print calibration square" button on a
+        /// debug panel: builds PeripageBitmapProtocol.BuildCalibrationSquareTexture()
+        /// and sends it through the normal PrintPhoto path. Print this with
+        /// verticalAspectCorrection at 1.0, measure the result with a ruler,
+        /// compute the real correction, dial it in with the slider, and
+        /// reprint to confirm.
+        /// </summary>
+        public void PrintCalibrationSquare(int squareSizePx = PeripageBitmapProtocol.PRINTER_WIDTH_PX)
+        {
+            Texture2D square = PeripageBitmapProtocol.BuildCalibrationSquareTexture(squareSizePx);
+            PrintPhoto(square);
+            Destroy(square);
+        }
+
+        #endregion
+
+        #region Dot Density
+
+        /// <summary>
         /// Bind this to a UI Slider's onValueChanged for a live "dot density"
         /// panel. Updates the Inspector-visible field, pushes the value into
         /// PeripageBitmapProtocol.MaxAverageDensity immediately (so the very
@@ -178,40 +219,115 @@ namespace TechArt.Module.Peripage
 
         public float GetMaxAverageDensity() => PeripageBitmapProtocol.MaxAverageDensity;
 
-        /// <summary>
-        /// Convenience wrapper for a "Print calibration square" button on a
-        /// debug panel: builds PeripageBitmapProtocol.BuildCalibrationSquareTexture()
-        /// and sends it through the normal PrintPhoto path. Print this with
-        /// verticalAspectCorrection at 1.0, measure the result with a ruler,
-        /// compute the real correction, dial it in with the slider, and
-        /// reprint to confirm.
-        /// </summary>
-        public void PrintCalibrationSquare(int squareSizePx = PeripageBitmapProtocol.PRINTER_WIDTH_PX)
-        {
-            Texture2D square = PeripageBitmapProtocol.BuildCalibrationSquareTexture(squareSizePx);
-            PrintPhoto(square);
-            Destroy(square);
-        }
+        #endregion
 
+        #region Bridge Initialization & Permissions
+
+        /// <summary>
+        /// Branches by actual Android OS version rather than assuming one
+        /// permission model fits everything:
+        ///   - API 31+ (Android 12+): BLUETOOTH_SCAN / BLUETOOTH_CONNECT are
+        ///     the real runtime gate.
+        ///   - API 23–30 (Android 6–11, includes older kiosk hardware):
+        ///     BLUETOOTH / BLUETOOTH_ADMIN are "normal" permissions, granted
+        ///     automatically at install — nothing to request for those.
+        ///     ACCESS_COARSE_LOCATION is the actual runtime gate here.
+        ///   - Below API 23: everything in the manifest is auto-granted at
+        ///     install time; there's nothing to request at runtime at all.
+        /// BLUETOOTH_SCAN/CONNECT literally don't exist as permission
+        /// strings before API 31 — requesting them on an older device is a
+        /// silent no-op with no dialog possible, which is why this branches
+        /// instead of always requesting the API-31 pair.
+        /// </summary>
         private void RequestBluetoothPermissions()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
-            bool hasConnect = Permission.HasUserAuthorizedPermission("android.permission.BLUETOOTH_CONNECT");
-            bool hasScan = Permission.HasUserAuthorizedPermission("android.permission.BLUETOOTH_SCAN");
-            Debug.Log($"[PeripagePrinterManager] Permissions before request — CONNECT: {hasConnect}, SCAN: {hasScan}");
+            int sdk = GetAndroidSDKLevel();
+            Debug.Log($"[PeripagePrinterManager] Android SDK_INT = {sdk}");
 
-            if (!hasConnect) Permission.RequestUserPermission("android.permission.BLUETOOTH_CONNECT");
-            if (!hasScan) Permission.RequestUserPermission("android.permission.BLUETOOTH_SCAN");
-#endif
+            if (sdk >= 31)
+            {
+                RequestAndInit(new[] { "android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT" });
+            }
+            else if (sdk >= 23)
+            {
+                RequestAndInit(new[] { "android.permission.ACCESS_COARSE_LOCATION" });
+            }
+            else
+            {
+                Debug.Log("[PeripagePrinterManager] SDK < 23 — permissions auto-granted at install.");
+                InitBridge();
+            }
+            // On a kiosk, permissions can also just be granted once at setup time
+            // via adb, so you don't have to handle the prompt UI at runtime:
+            //   adb shell pm grant <package> android.permission.BLUETOOTH_CONNECT
+            //   adb shell pm grant <package> android.permission.BLUETOOTH_SCAN
+            //   adb shell pm grant <package> android.permission.ACCESS_COARSE_LOCATION
+#else
             InitBridge();
+#endif
         }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        private int GetAndroidSDKLevel()
+        {
+            using (var version = new AndroidJavaClass("android.os.Build$VERSION"))
+            {
+                return version.GetStatic<int>("SDK_INT");
+            }
+        }
+
+        /// <summary>
+        /// Requests a batch of permissions as a single native call (never two
+        /// competing single-permission calls — that reliably suppresses both
+        /// dialogs on many Android/Unity combinations), then calls
+        /// InitBridge() exactly once, only after every permission in the
+        /// batch has actually been answered (granted or denied either way).
+        /// </summary>
+        private void RequestAndInit(string[] permissions)
+        {
+            bool allGranted = true;
+            foreach (var p in permissions)
+            {
+                bool granted = Permission.HasUserAuthorizedPermission(p);
+                Debug.Log($"[PeripagePrinterManager] {p} granted = {granted}");
+                allGranted &= granted;
+            }
+
+            if (allGranted)
+            {
+                InitBridge();
+                return;
+            }
+
+            int remaining = permissions.Length;
+            bool bridgeStarted = false;
+
+            void TryInitOnce()
+            {
+                remaining--;
+                if (remaining <= 0 && !bridgeStarted)
+                {
+                    bridgeStarted = true;
+                    InitBridge();
+                }
+            }
+
+            var callbacks = new PermissionCallbacks();
+            callbacks.PermissionGranted += p => { Debug.Log($"[PeripagePrinterManager] Granted: {p}"); TryInitOnce(); };
+            callbacks.PermissionDenied += p => { Debug.LogWarning($"[PeripagePrinterManager] Denied: {p}"); TryInitOnce(); };
+            callbacks.PermissionDeniedAndDontAskAgain += p => { Debug.LogWarning($"[PeripagePrinterManager] Permanently denied: {p}"); TryInitOnce(); };
+
+            Permission.RequestUserPermissions(permissions, callbacks);
+        }
+#endif
 
         private void InitBridge()
         {
-    #if UNITY_ANDROID
+#if UNITY_ANDROID
             _bridge = new PeripageAndroidBridge(gameObject.name, this);
             _initialized = true;
-    #elif UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX
+#elif UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX
             // Real Mac path: talks to the same PeripageMacNative plugin that
             // PeripageMacDeviceDiscovery uses to scan/connect, so whatever the
             // user already connected to via that flow is what Print() uses here.
@@ -219,7 +335,7 @@ namespace TechArt.Module.Peripage
             _initialized = true;
             Debug.Log("[PeripagePrinterManager] Using real Mac Bluetooth bridge (PeripageMacNative). " +
                       "Connect via PeripageMacDeviceDiscovery's scan/select/OK flow before printing.");
-    #else
+#else
             if (useMockBridgeOutsideAndroid)
             {
                 var mock = new PeripageEditorMockBridge(this, this)
@@ -239,17 +355,26 @@ namespace TechArt.Module.Peripage
                                   "disabled — Connect()/PrintPhoto() calls will no-op.");
                 _initialized = false;
             }
-    #endif
+#endif
         }
+
+        #endregion
+
+        #region Connection
 
         public void Connect() => Connect(printerName);
 
+        /// <summary>
+        /// Connects to a specific address or name — used by
+        /// PeripageAndroidDeviceDiscovery when the user picks a device from
+        /// the paired list, bypassing the name-matching fallback in
+        /// PeripageAndroidBridge.Connect() since the address is already exact.
+        /// </summary>
         public void Connect(string addressOrName)
         {
             if (!_initialized) { Debug.LogWarning("Bridge not initialized yet"); return; }
             _bridge.Connect(addressOrName);
         }
-
 
         public void Disconnect()
         {
@@ -263,19 +388,19 @@ namespace TechArt.Module.Peripage
             return _bridge.IsConnected();
         }
 
-        public bool IsInitialized => _initialized;
-
+        /// <summary>
+        /// Android-only: raw paired-device list ("Name|MAC" per entry), used
+        /// by PeripageAndroidDeviceDiscovery to show a pick list. Empty on any
+        /// other platform/bridge.
+        /// </summary>
         public string[] GetPairedPrinters()
         {
-            if (_bridge is PeripageAndroidBridge androidBridge)
-            {
-                return androidBridge.GetPairedPrinters();
-            }
-
-            Debug.LogWarning($"[PeripagePrinterManager] GetPairedPrinters called but active bridge is " +
-                $"{(_bridge == null ? "NULL — InitBridge() hasn't run yet (likely a Start() ordering race)" : _bridge.GetType().Name)}.");
-            return Array.Empty<string>();
+            return _bridge is PeripageAndroidBridge androidBridge ? androidBridge.GetPairedPrinters() : Array.Empty<string>();
         }
+
+        #endregion
+
+        #region Printing
 
         /// <summary>
         /// Converts a Texture2D (e.g. the kiosk photo) into the packed 1-bit
@@ -300,7 +425,7 @@ namespace TechArt.Module.Peripage
                 return;
             }
 
-    #if UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX
+#if UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX
             if (debugTinyTestPrintOnly && _bridge is PeripageMacBridge macBridge)
             {
                 Debug.Log("[PeripagePrinterManager] debugTinyTestPrintOnly is ON — " +
@@ -310,7 +435,7 @@ namespace TechArt.Module.Peripage
                 else OnPrintFailedCallback("tiny test print failed (mac native)");
                 return;
             }
-    #endif
+#endif
 
             Texture2D rotated = rotate180 ? PeripageBitmapProtocol.Rotate180(source) : source;
 
@@ -330,12 +455,12 @@ namespace TechArt.Module.Peripage
             Texture2D withMargin = PeripageBitmapProtocol.AppendBottomMargin(resized, bottomCutMarginMm);
             byte[] pngBytes = withMargin.EncodeToPNG();
 
-    #if UNITY_EDITOR
+#if UNITY_EDITOR
             if (saveMockPrintPreviewPng && _bridge is PeripageEditorMockBridge)
             {
                 SavePreviewPng(withMargin);
             }
-    #endif
+#endif
 
             _bridge.PrintBitmap(pngBytes);
 
@@ -344,7 +469,7 @@ namespace TechArt.Module.Peripage
             if (rotated != source) Destroy(rotated);
         }
 
-    #if UNITY_EDITOR
+#if UNITY_EDITOR
         /// <summary>
         /// Editor-only convenience: writes out what the printer would have
         /// received as a viewable PNG, so you can sanity-check the
@@ -366,9 +491,185 @@ namespace TechArt.Module.Peripage
                 Debug.LogWarning($"Failed to save print preview: {e.Message}");
             }
         }
-    #endif
+#endif
 
-        // ---------- Callbacks invoked by Kotlin via UnitySendMessage ----------
+        #endregion
+
+        #region Native Bluetooth Discovery (bypasses native .aar plugin)
+
+        /// <summary>
+        /// Reads already-paired ("bonded") devices directly via Android's own
+        /// BluetoothAdapter, bypassing the native Peripage .aar plugin
+        /// entirely. Added because that plugin's own getPairedPrinters()
+        /// unconditionally checks for BLUETOOTH_CONNECT — an Android 12+-only
+        /// permission that doesn't exist at all on pre-Android-12 hardware
+        /// (e.g. this kiosk's API 25) — so it always throws a
+        /// SecurityException there, even though the OS itself is happy to
+        /// return the list once plain BLUETOOTH (a normal, auto-granted
+        /// permission) is declared. Returns "Name|MAC" entries, the same
+        /// format GetPairedPrinters() uses, so either can feed
+        /// PeripageAndroidDeviceDiscovery.
+        /// </summary>
+        public string[] GetBondedDevicesNative()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            try
+            {
+                using (var bluetoothAdapterClass = new AndroidJavaClass("android.bluetooth.BluetoothAdapter"))
+                using (var adapter = bluetoothAdapterClass.CallStatic<AndroidJavaObject>("getDefaultAdapter"))
+                {
+                    if (adapter == null)
+                    {
+                        Debug.LogWarning("[PeripagePrinterManager] No Bluetooth adapter on this device.");
+                        return Array.Empty<string>();
+                    }
+
+                    using (var bondedSet = adapter.Call<AndroidJavaObject>("getBondedDevices"))
+                    using (var iterator = bondedSet.Call<AndroidJavaObject>("iterator"))
+                    {
+                        var results = new System.Collections.Generic.List<string>();
+                        while (iterator.Call<bool>("hasNext"))
+                        {
+                            using (var device = iterator.Call<AndroidJavaObject>("next"))
+                            {
+                                string name = device.Call<string>("getName");
+                                string address = device.Call<string>("getAddress");
+                                results.Add($"{name}|{address}");
+                            }
+                        }
+                        Debug.Log($"[PeripagePrinterManager] GetBondedDevicesNative found {results.Count} device(s).");
+                        return results.ToArray();
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[PeripagePrinterManager] GetBondedDevicesNative failed: {e.Message}");
+                return Array.Empty<string>();
+            }
+#else
+            return Array.Empty<string>();
+#endif
+        }
+
+        /// <summary>
+        /// Kicks off Android's native background Bluetooth discovery (for
+        /// devices NOT already paired). On API 23–30 this requires
+        /// IsLocationServiceActive() to be true, or it silently finds
+        /// nothing. Results aren't returned synchronously — pair the device
+        /// via Android's own Bluetooth settings once discovery reveals it,
+        /// then GetBondedDevicesNative() will see it from then on.
+        /// </summary>
+        public bool StartNativeDiscovery()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            if (!IsLocationServiceActive())
+            {
+                Debug.LogWarning("[PeripagePrinterManager] StartNativeDiscovery: location services are off — " +
+                                  "Android won't return live scan results without it on this OS version.");
+                return false;
+            }
+
+            try
+            {
+                using (var bluetoothAdapterClass = new AndroidJavaClass("android.bluetooth.BluetoothAdapter"))
+                using (var adapter = bluetoothAdapterClass.CallStatic<AndroidJavaObject>("getDefaultAdapter"))
+                {
+                    if (adapter == null) return false;
+
+                    bool isEnabled = adapter.Call<bool>("isEnabled");
+                    if (!isEnabled)
+                    {
+                        Debug.LogWarning("[PeripagePrinterManager] Bluetooth radio is off — enabling...");
+                        adapter.Call<bool>("enable");
+                    }
+
+                    bool started = adapter.Call<bool>("startDiscovery");
+                    Debug.Log($"[PeripagePrinterManager] Native discovery started: {started}");
+                    return started;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[PeripagePrinterManager] StartNativeDiscovery failed: {e.Message}");
+                return false;
+            }
+#else
+            return false;
+#endif
+        }
+
+        #endregion
+
+        #region Location Service
+
+        /// <summary>
+        /// Checks whether at least one system location provider (GPS or
+        /// network) is currently active. On Android 6–11, classic Bluetooth
+        /// device discovery requires this to be on — it's not the same thing
+        /// as the app having ACCESS_COARSE_LOCATION *permission* granted,
+        /// both matter independently.
+        /// Not Android, or the check fails for any reason, returns true so
+        /// this never blocks the flow on platforms where it doesn't apply.
+        /// </summary>
+        public bool IsLocationServiceActive()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            try
+            {
+                using (var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
+                using (var currentActivity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity"))
+                using (var locationService = currentActivity.Call<AndroidJavaObject>("getSystemService", "location"))
+                {
+                    bool gpsEnabled = locationService.Call<bool>("isProviderEnabled", "gps");
+                    bool networkEnabled = locationService.Call<bool>("isProviderEnabled", "network");
+                    Debug.Log($"[PeripagePrinterManager] Location providers — GPS: {gpsEnabled}, Network: {networkEnabled}");
+                    return gpsEnabled || networkEnabled;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[PeripagePrinterManager] Failed to check location providers: {e.Message}");
+                return false;
+            }
+#else
+            return true;
+#endif
+        }
+
+        /// <summary>
+        /// Opens Android's system Location Settings screen so the user (or a
+        /// kiosk attendant) can enable a location provider without leaving the
+        /// app's context entirely. No-ops with a warning on non-Android platforms.
+        /// </summary>
+        public void OpenLocationSettings()
+        {
+            Debug.Log("[PeripagePrinterManager] Opening Android System Location Settings...");
+#if UNITY_ANDROID && !UNITY_EDITOR
+            try
+            {
+                using (var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
+                using (var currentActivity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity"))
+                using (var intent = new AndroidJavaObject("android.content.Intent", "android.settings.LOCATION_SOURCE_SETTINGS"))
+                {
+                    intent.Call<AndroidJavaObject>("addFlags", 0x10000000); // FLAG_ACTIVITY_NEW_TASK
+                    currentActivity.Call("startActivity", intent);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[PeripagePrinterManager] Failed to open location settings: {e.Message}");
+            }
+#else
+            Debug.LogWarning("[PeripagePrinterManager] Not on Android — cannot open location settings.");
+#endif
+        }
+
+        #endregion
+
+        #region Native Callbacks
+
+        // Callbacks invoked by Kotlin via UnitySendMessage.
         // Method names below must exactly match what PeripageBridge.sendToUnity() calls.
 
         public void OnConnectedCallback(string macAddress)
@@ -399,5 +700,7 @@ namespace TechArt.Module.Peripage
             Debug.LogWarning($"Print failed: {error}");
             OnPrintFailed?.Invoke(error);
         }
+
+        #endregion
     }
 }

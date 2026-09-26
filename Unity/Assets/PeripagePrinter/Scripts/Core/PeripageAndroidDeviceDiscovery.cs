@@ -30,7 +30,7 @@ namespace TechArt.Module.Peripage
         public event Action OnConnected;
         public event Action<string> OnConnectFailed;
 
-    #if UNITY_ANDROID
+#if UNITY_ANDROID
 
         private void OnEnable()
         {
@@ -66,38 +66,42 @@ namespace TechArt.Module.Peripage
         }
 
         /// <summary>
-        /// "Scan" on Android = re-read the OS's paired-device list via the
-        /// native plugin (fast, synchronous, local — not a live BLE/classic
-        /// scan). Entries come back as "Name|MAC" from getPairedPrinters().
+        /// "Scan" on Android = re-read the OS's paired-device list. Reads it
+        /// via PeripagePrinterManager.GetBondedDevicesNative() — direct
+        /// android.bluetooth.BluetoothAdapter calls made from C# — rather
+        /// than GetPairedPrinters() (which routes through the native .aar
+        /// plugin's own getPairedPrinters(), whose unconditional
+        /// BLUETOOTH_CONNECT check always fails on pre-Android-12 hardware,
+        /// since that permission doesn't exist there at all). Entries come
+        /// back as "Name|MAC" either way, so ConfirmAndConnect() below is
+        /// unaffected — it still hands the selected MAC to
+        /// PeripagePrinterManager.Connect(), which goes through the real
+        /// native plugin's connect() to actually open the socket.
         /// </summary>
         [ContextMenu("1. Refresh Paired Devices")]
         public void StartScan()
         {
             if (PeripagePrinterManager.Instance == null)
             {
-                Debug.LogWarning("[PeripageAndroidDeviceDiscovery] StartScan: PeripagePrinterManager.Instance is null.");
+                Debug.LogWarning("[PeripageAndroidDeviceDiscovery] No PeripagePrinterManager in scene yet.");
                 return;
             }
 
             IsScanning = true;
             Devices.Clear();
 
-            string[] paired = PeripagePrinterManager.Instance.GetPairedPrinters();
-            Debug.Log($"[PeripageAndroidDeviceDiscovery] StartScan: got {paired.Length} entries from GetPairedPrinters().");
-
+            string[] paired = PeripagePrinterManager.Instance.GetBondedDevicesNative();
             foreach (var entry in paired)
             {
                 int sep = entry.IndexOf('|');
-                if (sep < 0)
-                {
-                    Debug.LogWarning($"[PeripageAndroidDeviceDiscovery] Skipping malformed entry (no '|'): '{entry}'");
-                    continue;
-                }
-                Devices.Add(new PeripageDiscoveredDevice(entry.Substring(0, sep), entry.Substring(sep + 1)));
+                if (sep < 0) continue;
+                Devices.Add(new PeripageDiscoveredDevice(
+                    entry.Substring(0, sep),
+                    entry.Substring(sep + 1)));
             }
 
             IsScanning = false;
-            Debug.Log($"[PeripageAndroidDeviceDiscovery] Parsed {Devices.Count} device(s).");
+            Debug.Log($"[PeripageAndroidDeviceDiscovery] Found {Devices.Count} paired device(s).");
             OnDevicesUpdated?.Invoke();
         }
 
@@ -139,7 +143,7 @@ namespace TechArt.Module.Peripage
             IsConnected = false;
         }
 
-    #else
+#else
         // Non-Android platforms: no-op stubs so other scripts can reference
         // this class without needing platform #if guards everywhere.
         public void StartScan() => Debug.LogWarning("PeripageAndroidDeviceDiscovery is Android-only.");
@@ -147,6 +151,6 @@ namespace TechArt.Module.Peripage
         public void SelectDevice(string address) { }
         public void ConfirmAndConnect() { }
         public void Disconnect() { }
-    #endif
+#endif
     }
 }

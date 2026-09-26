@@ -95,6 +95,32 @@ namespace TechArt.Module.Peripage.Demo
                  "Works with either UnityEngine.UI.Text or TextMeshProUGUI.")]
         [SerializeField] private GameObject densityValueLabel;
 
+        [Header("Location (Android pre-12 Bluetooth requirement)")]
+        [Tooltip("Optional. Button that opens Android's system Location Settings " +
+                 "screen — routes through PeripagePrinterManager.OpenLocationSettings() " +
+                 "so any other script can trigger the same thing.")]
+        [SerializeField] private Button locationSettingsButton;
+
+        [Tooltip("Optional. Shows whether a system location provider (GPS or " +
+                 "network) is currently active, checked on Start via " +
+                 "PeripagePrinterManager.IsLocationServiceActive() and refreshed " +
+                 "whenever the app regains focus (e.g. after the user backs out " +
+                 "of the Settings screen this opened).")]
+        [SerializeField] private TextMeshProUGUI txtLocationServiceStatus;
+
+        [Header("Bluetooth devices (native, bypasses plugin bug)")]
+        [Tooltip("Optional. Reads bonded devices directly via Android's own " +
+                 "BluetoothAdapter (PeripagePrinterManager.GetBondedDevicesNative()) " +
+                 "and starts a native discovery scan for unpaired ones — bypasses " +
+                 "the native .aar plugin's getPairedPrinters(), which unconditionally " +
+                 "requires BLUETOOTH_CONNECT (an Android 12+-only permission) and so " +
+                 "always fails on pre-Android-12 kiosk hardware.")]
+        [SerializeField] private Button readBluetoothDevicesButton;
+
+        [Tooltip("Optional. Shows the bonded device list read back from " +
+                 "GetBondedDevicesNative(), one \"Name (MAC)\" per line.")]
+        [SerializeField] private TextMeshProUGUI txtBluetoothDevicesLog;
+
         #endregion
 
         #region Private Fields
@@ -130,7 +156,87 @@ namespace TechArt.Module.Peripage.Demo
                 printerManager = FindObjectOfType<PeripagePrinterManager>();
             }
 
+            if (locationSettingsButton != null)
+            {
+                locationSettingsButton.onClick.AddListener(OnLocationSettingsPressed);
+            }
+
+            if (readBluetoothDevicesButton != null)
+            {
+                readBluetoothDevicesButton.onClick.AddListener(OnReadBluetoothDevicesPressed);
+            }
+
+            RefreshLocationServiceStatus();
             SetUpCalibrationControls();
+        }
+
+        /// <summary>
+        /// Reads bonded devices via PeripagePrinterManager.GetBondedDevicesNative()
+        /// (bypasses the native plugin's broken permission check on this OS
+        /// version) and kicks off a discovery scan for unpaired devices too.
+        /// Discovery results aren't synchronous — pair a newly-found device via
+        /// Android's own Bluetooth settings, then press this again to see it
+        /// picked up by GetBondedDevicesNative().
+        /// </summary>
+        private void OnReadBluetoothDevicesPressed()
+        {
+            if (printerManager == null) return;
+
+            string[] devices = printerManager.GetBondedDevicesNative();
+            printerManager.StartNativeDiscovery();
+
+            string log = "";
+
+            if (devices.Length == 0)
+            {
+                log = "No paired devices found.";
+            }
+            else
+            {
+                var lines = new System.Text.StringBuilder();
+                foreach (var entry in devices)
+                {
+                    int sep = entry.IndexOf('|');
+                    lines.AppendLine(sep < 0 ? entry : $"{entry.Substring(0, sep)} ({entry.Substring(sep + 1)})");
+                }
+               
+                log = lines.ToString();
+            }
+
+            if (txtBluetoothDevicesLog != null)
+            {
+                txtBluetoothDevicesLog.text = log;
+            }
+            Debug.Log(log);
+        }
+
+        /// <summary>
+        /// Re-checks location-service status whenever the app regains focus —
+        /// covers the common flow of tapping the button, toggling location in
+        /// Settings, then backing out to the app, so the label updates without
+        /// needing a manual refresh.
+        /// </summary>
+        private void OnApplicationFocus(bool hasFocus)
+        {
+            if (hasFocus)
+            {
+                RefreshLocationServiceStatus();
+            }
+        }
+
+        private void OnLocationSettingsPressed()
+        {
+            printerManager?.OpenLocationSettings();
+        }
+
+        private void RefreshLocationServiceStatus()
+        {
+            if (printerManager == null || txtLocationServiceStatus == null) return;
+
+            bool active = printerManager.IsLocationServiceActive();
+            txtLocationServiceStatus.text = active
+                ? "Location services: ON"
+                : "Location services: OFF — tap to enable";
         }
 
         /// <summary>
