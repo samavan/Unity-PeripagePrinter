@@ -5,11 +5,11 @@ To support that tiny Peripage printer for Unity.
 Partially Vibe-coded.
 
 # Structure:
-- Assembly Definition
-- NameSpace
-- #region
-- Commented with other git repo used as ref
-- Demo Scene with UI support
+- ✅Assembly Definition:`PeripagePrinter.Runtime`
+- ✅NameSpace: `PeripagePrinter.Runtime`
+- ✅#region define 
+- ✅Commented with other git repo used as ref
+- ✅Demo Scene with UI support
 
 # Support
 - Mac OS Unity Editor plugin is working.
