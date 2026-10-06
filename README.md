@@ -17,3 +17,5 @@ API Level 25
 
 It's free; have fun :) 
 Ping me if you need more support with the tiny printer ^_^!
+
+<img src="Documentation/SumplongShowcasePreview.gif" width="400" alt="Preview">
