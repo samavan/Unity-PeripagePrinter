@@ -40,6 +40,9 @@ You can import it again in your project :
 
 It is already supported in the `.gitignore`.
 
+# Unity Version
+Tested with `Unity 6000.4.4f1`
+
 # Preview
 
 <img src="Documentation/SumplongShowcasePreview.gif" width="400" alt="Preview">
