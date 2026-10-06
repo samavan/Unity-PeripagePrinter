@@ -1,0 +1,3 @@
+#Ignore all .meta files except those under Unity/:
+*.meta
+!/Unity/Assets/**/*.meta
