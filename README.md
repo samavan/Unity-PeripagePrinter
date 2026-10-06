@@ -15,9 +15,11 @@ Partially Vibe-coded.
 - Mac OS Unity Editor plugin is working.
 
 - Android plugin to support Kiosk Touch Display:
+```bash
 rockchip rk3288 
 Android OS 7.1.2 
 API Level 25
+```
 
 # Contributing
 It's free; have fun :) 
