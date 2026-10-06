@@ -1,10 +1,10 @@
 using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
-using TechArt.Module.Peripage;
+using PeripagePrinter.Runtime;
 using TMPro;
 
-namespace TechArt.Module.Peripage.Demo
+namespace PeripagePrinter.Demo
 {
     /// <summary>
     /// Implements the print-zone flow:

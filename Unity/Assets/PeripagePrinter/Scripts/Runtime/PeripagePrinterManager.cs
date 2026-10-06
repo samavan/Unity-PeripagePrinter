@@ -3,7 +3,7 @@ using System.IO;
 using UnityEngine;
 using UnityEngine.Android;
 
-namespace TechArt.Module.Peripage
+namespace PeripagePrinter.Runtime
 {
     /// <summary>
     /// Attach this to a GameObject named "PeripageManager" in your kiosk scene

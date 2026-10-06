@@ -3,7 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace TechArt.Module.Peripage
+namespace PeripagePrinter.Runtime
 {
     /// <summary>
     /// Android counterpart to PeripageMacDeviceDiscovery, but "discovery" here

@@ -1,6 +1,6 @@
 {
-    "name": "TechArt.Module.Peripage",
-    "rootNamespace": "TechArt.Module.Peripage",
+    "name": "PeripagePrinter.Runtime",
+    "rootNamespace": "PeripagePrinter.Runtime",
     "references": [],
     "includePlatforms": [],
     "excludePlatforms": [],

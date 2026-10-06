@@ -1,7 +1,7 @@
 using System.Collections;
 using UnityEngine;
 
-namespace TechArt.Module.Peripage
+namespace PeripagePrinter.Runtime
 {
     /// <summary>
     /// Real Mac implementation — talks directly to PeripageMacNative (the same

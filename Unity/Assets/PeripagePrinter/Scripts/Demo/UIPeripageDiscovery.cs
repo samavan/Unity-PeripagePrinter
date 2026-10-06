@@ -1,9 +1,10 @@
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using TechArt.Module.Peripage;
+using PeripagePrinter.Runtime;
 
-namespace TechArt.Module.Peripage.Demo
+
+namespace PeripagePrinter.Demo
 {
     /// <summary>
     /// Minimal UI glue for the device-discovery flow: scan/refresh, list

@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace TechArt.Module.Peripage
+namespace PeripagePrinter.Runtime
 {
     /// <summary>
     /// Platform-agnostic encoder for the Peripage A6/A6+ bitmap print protocol.

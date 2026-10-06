@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace TechArt.Module.Peripage
+namespace PeripagePrinter.Runtime
 {
     /// <summary>
     /// A single Bluetooth device as surfaced by a discovery implementation —

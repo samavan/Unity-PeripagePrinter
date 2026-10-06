@@ -1,6 +1,6 @@
 
 
-namespace TechArt.Module.Peripage
+namespace PeripagePrinter.Runtime
 {
     /// <summary>
     /// Common interface implemented by both the real Android Bluetooth bridge

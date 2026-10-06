@@ -1,8 +1,8 @@
 {
-    "name": "TechArt.Module.Peripage.Demo",
-    "rootNamespace": "TechArt.Module.Peripage.Demo",
+    "name": "PeripagePrinter.Demo",
+    "rootNamespace": "PeripagePrinter.Demo",
     "references": [
-        "TechArt.Module.Peripage",
+        "PeripagePrinter.Runtime",
         "UnityEngine.UI",
         "Unity.TextMeshPro"
     ],

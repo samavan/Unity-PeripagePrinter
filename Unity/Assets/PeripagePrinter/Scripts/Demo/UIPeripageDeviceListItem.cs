@@ -3,7 +3,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace TechArt.Module.Peripage.Demo
+namespace PeripagePrinter.Demo
 {
     /// <summary>
     /// Lives on the device button prefab (btnTemplate). Owns the references to

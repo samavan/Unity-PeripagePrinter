@@ -1,7 +1,7 @@
 using System.Collections;
 using UnityEngine;
 
-namespace TechArt.Module.Peripage
+namespace PeripagePrinter.Runtime
 {
     /// <summary>
     /// Mock bridge used in the Editor (and optionally standalone Win/Mac builds)

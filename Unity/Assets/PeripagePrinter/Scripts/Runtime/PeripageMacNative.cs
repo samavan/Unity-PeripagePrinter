@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace TechArt.Module.Peripage
+namespace PeripagePrinter.Runtime
 {
     /// <summary>
     /// Raw P/Invoke bindings to PeripageMacPlugin.bundle. Only functional in
