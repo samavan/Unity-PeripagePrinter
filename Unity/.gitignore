@@ -112,3 +112,6 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# IngameDebugConsole plugin folder
+/[Aa]ssets/[Pp]lugins/[Ii]ngameDebugConsole*
