@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -21,49 +22,105 @@ namespace TechArt.Module.Peripage
     /// </summary>
     public class PeripageAndroidDeviceDiscovery : MonoBehaviour, IPeripageDeviceDiscovery
     {
+        #region Public State
+
         [field: SerializeField] public List<PeripageDiscoveredDevice> Devices { get; private set; } = new List<PeripageDiscoveredDevice>();
         [field: SerializeField] public string SelectedAddress { get; private set; }
         [field: SerializeField] public bool IsScanning { get; private set; }
         [field: SerializeField] public bool IsConnected { get; private set; }
 
+        #endregion
+
+        #region Inspector
+
+        [Header("Connect")]
+        [Tooltip("If the native plugin never reports connected/failed within this " +
+                 "many seconds, OnConnectFailed is raised so the UI can never get " +
+                 "stuck on \"Connecting...\" forever.")]
+        [SerializeField] private float connectTimeoutSeconds = 60f;
+
+        #endregion
+
+        #region Events
+
         public event Action OnDevicesUpdated;
         public event Action OnConnected;
         public event Action<string> OnConnectFailed;
 
+        #endregion
+
 #if UNITY_ANDROID
+
+        #region Private Fields
+
+        private bool _subscribed;
+        private Coroutine _timeout;
+
+        #endregion
+
+        #region Unity Lifecycle
 
         private void OnEnable()
         {
-            // PeripagePrinterManager owns the actual AndroidJavaObject/connection —
-            // we just listen in, so calling Connect() below (routed through the
-            // manager) keeps our IsConnected/events in sync with the real state.
-            if (PeripagePrinterManager.Instance != null)
-            {
-                PeripagePrinterManager.Instance.OnConnected += HandleManagerConnected;
-                PeripagePrinterManager.Instance.OnConnectFailed += HandleManagerConnectFailed;
-            }
+            // May still be null here if PeripagePrinterManager.Awake hasn't run
+            // yet — that's fine, EnsureSubscribed() is retried from StartScan()
+            // and ConfirmAndConnect().
+            EnsureSubscribed();
         }
 
         private void OnDisable()
         {
-            if (PeripagePrinterManager.Instance != null)
+            StopTimeout();
+
+            if (_subscribed && PeripagePrinterManager.Instance != null)
             {
                 PeripagePrinterManager.Instance.OnConnected -= HandleManagerConnected;
                 PeripagePrinterManager.Instance.OnConnectFailed -= HandleManagerConnectFailed;
             }
+            _subscribed = false;
+        }
+
+        #endregion
+
+        #region Manager Subscription
+
+        /// <summary>
+        /// PeripagePrinterManager owns the actual AndroidJavaObject/connection —
+        /// we just listen in, so calling Connect() (routed through the manager)
+        /// keeps our IsConnected/events in sync with the real state. Lazy and
+        /// idempotent: safe to call repeatedly, and covers the case where this
+        /// component was enabled before the manager's Awake set Instance.
+        /// </summary>
+        private bool EnsureSubscribed()
+        {
+            if (_subscribed) return true;
+
+            var manager = PeripagePrinterManager.Instance;
+            if (manager == null) return false;
+
+            manager.OnConnected += HandleManagerConnected;
+            manager.OnConnectFailed += HandleManagerConnectFailed;
+            _subscribed = true;
+            return true;
         }
 
         private void HandleManagerConnected()
         {
+            StopTimeout();
             IsConnected = true;
             OnConnected?.Invoke();
         }
 
         private void HandleManagerConnectFailed(string error)
         {
+            StopTimeout();
             IsConnected = false;
             OnConnectFailed?.Invoke(error);
         }
+
+        #endregion
+
+        #region Discovery (Paired Device List)
 
         /// <summary>
         /// "Scan" on Android = re-read the OS's paired-device list. Reads it
@@ -81,6 +138,8 @@ namespace TechArt.Module.Peripage
         [ContextMenu("1. Refresh Paired Devices")]
         public void StartScan()
         {
+            EnsureSubscribed();
+
             if (PeripagePrinterManager.Instance == null)
             {
                 Debug.LogWarning("[PeripageAndroidDeviceDiscovery] No PeripagePrinterManager in scene yet.");
@@ -108,6 +167,10 @@ namespace TechArt.Module.Peripage
         /// <summary>Same as StartScan, named for UI clarity (e.g. a "Refresh" button).</summary>
         public void Refresh() => StartScan();
 
+        #endregion
+
+        #region Selection & Connection
+
         /// <summary>Called when the user taps a device in the list.</summary>
         public void SelectDevice(string address)
         {
@@ -127,11 +190,19 @@ namespace TechArt.Module.Peripage
             if (PeripagePrinterManager.Instance == null)
             {
                 Debug.LogWarning("[PeripageAndroidDeviceDiscovery] No PeripagePrinterManager in scene yet.");
+                OnConnectFailed?.Invoke("PeripagePrinterManager not found");
                 return;
             }
 
+            EnsureSubscribed();
+
             Debug.Log($"[PeripageAndroidDeviceDiscovery] Connecting to {SelectedAddress}...");
-            // SelectedAddress is a real MAC (from getPairedPrinters), so this
+
+            // Safety net: if the native side never calls back, don't leave the UI hanging.
+            StopTimeout();
+            _timeout = StartCoroutine(ConnectTimeout(connectTimeoutSeconds));
+
+            // SelectedAddress is a real MAC (from the bonded-device list), so this
             // hits PeripageAndroidBridge's direct-MAC path, skipping the
             // name-matching fallback entirely.
             PeripagePrinterManager.Instance.Connect(SelectedAddress);
@@ -139,11 +210,42 @@ namespace TechArt.Module.Peripage
 
         public void Disconnect()
         {
+            StopTimeout();
             PeripagePrinterManager.Instance?.Disconnect();
             IsConnected = false;
         }
 
+        #endregion
+
+        #region Connect Timeout
+
+        private void StopTimeout()
+        {
+            if (_timeout != null)
+            {
+                StopCoroutine(_timeout);
+                _timeout = null;
+            }
+        }
+
+        private IEnumerator ConnectTimeout(float seconds)
+        {
+            yield return new WaitForSeconds(seconds);
+            _timeout = null;
+
+            if (!IsConnected)
+            {
+                Debug.LogWarning("[PeripageAndroidDeviceDiscovery] Connect timed out — no callback received from native plugin.");
+                OnConnectFailed?.Invoke("timed out waiting for printer");
+            }
+        }
+
+        #endregion
+
 #else
+
+        #region Non-Android Stubs
+
         // Non-Android platforms: no-op stubs so other scripts can reference
         // this class without needing platform #if guards everywhere.
         public void StartScan() => Debug.LogWarning("PeripageAndroidDeviceDiscovery is Android-only.");
@@ -151,6 +253,9 @@ namespace TechArt.Module.Peripage
         public void SelectDevice(string address) { }
         public void ConfirmAndConnect() { }
         public void Disconnect() { }
+
+        #endregion
+
 #endif
     }
 }

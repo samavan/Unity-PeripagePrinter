@@ -18,7 +18,8 @@ namespace TechArt.Module.Peripage.Demo
     /// anything else) has no implementation yet — logs a warning and disables
     /// the flow rather than crashing.
     ///
-    /// Expected hierarchy:
+    /// Expected hierarchy (all assigned in the Inspector — there is no
+    /// auto-build fallback):
     ///   - deviceListParent: empty RectTransform, gets one item per device
     ///   - deviceButtonPrefab: a prefab with a UIPeripageDeviceListItem
     ///     component (Button + child TextMeshProUGUI), one instantiated per device
@@ -35,7 +36,7 @@ namespace TechArt.Module.Peripage.Demo
                  "the right one for the current platform via FindObjectOfType.")]
         [SerializeField] private MonoBehaviour discoverySource;
 
-        [Header("UI refs (assign in Inspector, or leave empty to auto-build a basic UI)")]
+        [Header("UI refs (assign in Inspector)")]
         [SerializeField] private RectTransform deviceListParent;
         [SerializeField] private UIPeripageDeviceListItem deviceButtonPrefab;
         [SerializeField] private Button refreshButton;
@@ -49,6 +50,7 @@ namespace TechArt.Module.Peripage.Demo
 
         private IPeripageDeviceDiscovery _discovery;
         private string _pendingSelectedAddress;
+        private bool _connecting;
 
         #endregion
 
@@ -67,9 +69,9 @@ namespace TechArt.Module.Peripage.Demo
                 return;
             }
 
-            _discovery.OnDevicesUpdated += RebuildDeviceList;
-            _discovery.OnConnected += () => SetStatus("Connected!");
-            _discovery.OnConnectFailed += (err) => SetStatus($"Connect failed: {err}");
+            _discovery.OnDevicesUpdated += HandleDevicesUpdated;
+            _discovery.OnConnected += HandleConnected;
+            _discovery.OnConnectFailed += HandleConnectFailed;
 
             if (refreshButton != null)
             {
@@ -85,6 +87,19 @@ namespace TechArt.Module.Peripage.Demo
             OnRefreshClicked();
         }
 
+        private void OnDestroy()
+        {
+            if (_discovery != null)
+            {
+                _discovery.OnDevicesUpdated -= HandleDevicesUpdated;
+                _discovery.OnConnected -= HandleConnected;
+                _discovery.OnConnectFailed -= HandleConnectFailed;
+            }
+
+            if (refreshButton != null) refreshButton.onClick.RemoveListener(OnRefreshClicked);
+            if (okButton != null) okButton.onClick.RemoveListener(OnOkClicked);
+        }
+
         #endregion
 
         #region Button Handlers
@@ -92,6 +107,8 @@ namespace TechArt.Module.Peripage.Demo
         // Step 2: refresh button
         public void OnRefreshClicked()
         {
+            if (_discovery == null) return;
+
             SetStatus("Scanning...");
             _discovery.Refresh();
         }
@@ -99,14 +116,71 @@ namespace TechArt.Module.Peripage.Demo
         // Step 4/5: OK button confirms selection and connects
         public void OnOkClicked()
         {
+            if (_discovery == null) return;
+
+            if (_connecting)
+            {
+                SetStatus("Still connecting — please wait...");
+                return;
+            }
+
             if (string.IsNullOrEmpty(_pendingSelectedAddress))
             {
                 SetStatus("Select a device first");
                 return;
             }
+
+            _connecting = true;
+            SetOkInteractable(false);
+
             _discovery.SelectDevice(_pendingSelectedAddress);
             SetStatus("Connecting...");
             _discovery.ConfirmAndConnect();
+        }
+
+        #endregion
+
+        #region Discovery Event Handlers
+
+        /// <summary>
+        /// Single place that reports scan results. Sets the status FIRST so it
+        /// can never be skipped by the list-building code below. While a live
+        /// scan is still running (Mac), IsScanning stays true and this reports
+        /// progress; once it's done (always immediately on Android) it reports
+        /// "Scan complete".
+        /// </summary>
+        private void HandleDevicesUpdated()
+        {
+            int count = _discovery.Devices.Count;
+
+            if (_discovery.IsScanning)
+            {
+                SetStatus($"Scanning... {count} found so far");
+            }
+            else if (count == 0)
+            {
+                SetStatus("Scan complete: no devices found");
+            }
+            else
+            {
+                SetStatus($"Scan complete: {count} device(s) found — tap one, then OK");
+            }
+
+            RebuildDeviceList();
+        }
+
+        private void HandleConnected()
+        {
+            _connecting = false;
+            SetOkInteractable(true);
+            SetStatus("Connected!");
+        }
+
+        private void HandleConnectFailed(string error)
+        {
+            _connecting = false;
+            SetOkInteractable(true);
+            SetStatus($"Connect failed: {error}");
         }
 
         #endregion
@@ -164,6 +238,8 @@ namespace TechArt.Module.Peripage.Demo
         {
             if (deviceListParent == null || deviceButtonPrefab == null)
             {
+                Debug.LogWarning("[UIPeripageDiscovery] deviceListParent and/or deviceButtonPrefab " +
+                                 "are not assigned in the Inspector — the device list can't be drawn.");
                 return;
             }
 
@@ -181,8 +257,11 @@ namespace TechArt.Module.Peripage.Demo
                 string name = device.name;
                 item.Setup(name, address, () => OnDeviceClicked(address, name));
             }
+        }
 
-            SetStatus($"Found {_discovery.Devices.Count} device(s)");
+        private void SetOkInteractable(bool value)
+        {
+            if (okButton != null) okButton.interactable = value;
         }
 
         private void SetStatus(string message)

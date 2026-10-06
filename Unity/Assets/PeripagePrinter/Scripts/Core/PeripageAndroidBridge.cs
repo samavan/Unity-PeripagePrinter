@@ -36,11 +36,27 @@ namespace TechArt.Module.Peripage
 
         public void Connect(string macAddressOrName)
         {
-            if (_bridge == null) return;
+            if (_bridge == null)
+            {
+                Debug.LogError("[PeripageAndroidBridge] Connect: native bridge is null (constructor failed).");
+                _manager?.OnConnectFailedCallback("native bridge not created");
+                return;
+            }
+
+            Debug.Log($"[PeripageAndroidBridge] Connect('{macAddressOrName}')");
 
             if (LooksLikeMacAddress(macAddressOrName))
             {
-                _bridge.Call("connect", macAddressOrName);
+                try
+                {
+                    _bridge.Call("connect", macAddressOrName);
+                    Debug.Log("[PeripageAndroidBridge] native connect() invoked, waiting for callback...");
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"[PeripageAndroidBridge] connect threw: {e.Message}");
+                    _manager?.OnConnectFailedCallback(e.Message);
+                }
                 return;
             }
 

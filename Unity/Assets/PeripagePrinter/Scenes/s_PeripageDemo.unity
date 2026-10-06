@@ -5415,6 +5415,7 @@ MonoBehaviour:
   <SelectedAddress>k__BackingField: 
   <IsScanning>k__BackingField: 0
   <IsConnected>k__BackingField: 0
+  connectTimeoutSeconds: 60
 --- !u!1 &1147127004
 GameObject:
   m_ObjectHideFlags: 0
@@ -8744,7 +8745,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 22400762, guid: 67117722a812a2e46ab8cb8eafbf5f5e, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: 0.000061035156
+      value: 0.00006484985
       objectReference: {fileID: 0}
     - target: {fileID: 22426080, guid: 67117722a812a2e46ab8cb8eafbf5f5e, type: 3}
       propertyPath: m_AnchorMax.x

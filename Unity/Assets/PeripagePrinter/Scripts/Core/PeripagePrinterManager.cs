@@ -513,40 +513,49 @@ namespace TechArt.Module.Peripage
         public string[] GetBondedDevicesNative()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
-            try
+    try
+    {
+        using (var bluetoothAdapterClass = new AndroidJavaClass("android.bluetooth.BluetoothAdapter"))
+        using (var adapter = bluetoothAdapterClass.CallStatic<AndroidJavaObject>("getDefaultAdapter"))
+        {
+            if (adapter == null)
             {
-                using (var bluetoothAdapterClass = new AndroidJavaClass("android.bluetooth.BluetoothAdapter"))
-                using (var adapter = bluetoothAdapterClass.CallStatic<AndroidJavaObject>("getDefaultAdapter"))
-                {
-                    if (adapter == null)
-                    {
-                        Debug.LogWarning("[PeripagePrinterManager] No Bluetooth adapter on this device.");
-                        return Array.Empty<string>();
-                    }
-
-                    using (var bondedSet = adapter.Call<AndroidJavaObject>("getBondedDevices"))
-                    using (var iterator = bondedSet.Call<AndroidJavaObject>("iterator"))
-                    {
-                        var results = new System.Collections.Generic.List<string>();
-                        while (iterator.Call<bool>("hasNext"))
-                        {
-                            using (var device = iterator.Call<AndroidJavaObject>("next"))
-                            {
-                                string name = device.Call<string>("getName");
-                                string address = device.Call<string>("getAddress");
-                                results.Add($"{name}|{address}");
-                            }
-                        }
-                        Debug.Log($"[PeripagePrinterManager] GetBondedDevicesNative found {results.Count} device(s).");
-                        return results.ToArray();
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"[PeripagePrinterManager] GetBondedDevicesNative failed: {e.Message}");
+                Debug.LogWarning("[PeripagePrinterManager] No Bluetooth adapter on this device.");
                 return Array.Empty<string>();
             }
+
+            bool btEnabled = adapter.Call<bool>("isEnabled");
+            int btState = adapter.Call<int>("getState"); // 12 = STATE_ON
+            Debug.Log($"[PeripagePrinterManager] Bluetooth enabled = {btEnabled}, state = {btState} (12 = ON)");
+            if (!btEnabled)
+            {
+                Debug.LogWarning("[PeripagePrinterManager] Bluetooth is OFF — getBondedDevices() returns nothing while it's off.");
+                return Array.Empty<string>();
+            }
+
+            using (var bondedSet = adapter.Call<AndroidJavaObject>("getBondedDevices"))
+            using (var iterator = bondedSet.Call<AndroidJavaObject>("iterator"))
+            {
+                var results = new System.Collections.Generic.List<string>();
+                while (iterator.Call<bool>("hasNext"))
+                {
+                    using (var device = iterator.Call<AndroidJavaObject>("next"))
+                    {
+                        string name = device.Call<string>("getName");
+                        string address = device.Call<string>("getAddress");
+                        results.Add($"{name}|{address}");
+                    }
+                }
+                Debug.Log($"[PeripagePrinterManager] GetBondedDevicesNative found {results.Count} device(s).");
+                return results.ToArray();
+            }
+        }
+    }
+    catch (Exception e)
+    {
+        Debug.LogError($"[PeripagePrinterManager] GetBondedDevicesNative failed: {e.Message}");
+        return Array.Empty<string>();
+    }
 #else
             return Array.Empty<string>();
 #endif
@@ -701,6 +710,10 @@ namespace TechArt.Module.Peripage
             OnPrintFailed?.Invoke(error);
         }
 
+        public void OnNativeLogCallback(string message)
+        {
+            Debug.Log($"[Native] {message}");
+        }
         #endregion
     }
 }
